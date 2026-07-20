@@ -353,4 +353,8 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(PUB, 'index.html'));
 });
 
-app.listen(PORT, () => console.log(`[dsgoaccount] http://localhost:${PORT}`));
+if (require.main === module) {
+  app.listen(PORT, () => console.log(`[dsgoaccount] http://localhost:${PORT}`));
+}
+
+module.exports = app;
