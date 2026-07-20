@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ds-go 계정</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --fp-bg:    #0d0e14;
+      --fp-surf:  #181923;
+      --fp-surf2: #181923;
+      --fp-line:  rgba(255,255,255,0.09);
+      --fp-fg:    #f0f1f5;
+      --fp-muted: #6b7280;
+      --brand:    #6c5ce7;
+    }
+
+    html, body { height: 100%; }
+
+    body {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 100svh;
+      font-family: 'Noto Sans KR', system-ui, -apple-system, sans-serif;
+    }
+    .brand-panel   { order: 2; }
+    .form-panel-wrap { order: 1; }
+
+    /* ══════════════════════════════════════════════
+       브랜드 패널 (오른쪽)
+    ══════════════════════════════════════════════ */
+    .brand-panel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 48px 52px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .art-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .art-canvas canvas { display: block; width: 100%; height: 100%; }
+
+    .brand-panel::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      background:
+        linear-gradient(160deg, rgba(6,4,20,0.68) 0%, rgba(6,4,20,0.28) 55%, transparent 100%),
+        linear-gradient(to top, rgba(6,4,20,0.62) 0%, transparent 50%);
+      pointer-events: none;
+    }
+
+    .brand-top, .brand-bottom { position: relative; z-index: 2; }
+    .brand-logo svg { height: 52px; width: auto; }
+
+    .art-label {
+      position: absolute;
+      top: 50%;
+      left: 52px;
+      transform: translateY(-50%);
+      z-index: 2;
+    }
+    .art-label .eyebrow {
+      font-size: 11px; font-weight: 700;
+      letter-spacing: 0.18em; text-transform: uppercase;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 14px;
+    }
+    .art-label h2 {
+      font-size: clamp(26px, 2.8vw, 40px);
+      font-weight: 800; line-height: 1.15;
+      letter-spacing: -0.04em; color: #fff;
+      max-width: 320px;
+    }
+    .art-label h2 .accent {
+      background: linear-gradient(100deg, #a78bfa 10%, #60a5fa 90%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .art-label p {
+      margin-top: 14px; font-size: 14px;
+      line-height: 1.75; color: rgba(255,255,255,0.45);
+      max-width: 290px;
+    }
+
+    .brand-bottom { display: flex; gap: 8px; flex-wrap: wrap; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 7px 12px;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 999px;
+      font-size: 11.5px; font-weight: 600;
+      color: rgba(255,255,255,0.6);
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(8px);
+    }
+    .badge svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    /* ══════════════════════════════════════════════
+       폼 패널 (왼쪽) — 항상 다크
+    ══════════════════════════════════════════════ */
+    .form-panel-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0 48px;
+      background: var(--fp-bg);
+    }
+
+    .form-box {
+      width: 100%;
+      max-width: 360px;
+      margin: auto 0;
+      padding: 48px 0 32px;
+    }
+
+    /* 로고 헤더 */
+    .form-logos {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 36px;
+    }
+    .logo-circle {
+      display: flex; align-items: center; justify-content: center;
+    }
+    .logo-circle img { width: 110px; height: auto; object-fit: contain; }
+    .form-logo-title {
+      font-size: 18px; font-weight: 700;
+      color: var(--fp-fg); letter-spacing: -0.01em;
+    }
+    .form-logo-title span { font-weight: 400; color: var(--fp-muted); }
+
+    /* SSO 배너 */
+    .sso-strip {
+      display: none;
+      align-items: center;
+      gap: 11px;
+      padding: 11px 14px;
+      border: 1px solid rgba(108,92,231,0.3);
+      border-radius: 12px;
+      background: rgba(108,92,231,0.07);
+      margin-bottom: 20px;
+    }
+    .sso-strip.on { display: flex; }
+    .sso-strip-icon {
+      width: 32px; height: 32px; flex-shrink: 0;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.08);
+      display: grid; place-items: center;
+    }
+    .sso-strip-icon svg { width: 15px; height: 15px; fill: none; stroke: rgba(255,255,255,0.7); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+    .sso-strip-text .s-title { font-size: 13px; font-weight: 600; color: var(--fp-fg); }
+    .sso-strip-text .s-sub   { font-size: 11.5px; color: var(--fp-muted); margin-top: 1px; }
+
+    /* 세그먼트 탭 */
+    .tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--fp-line);
+      border-radius: 12px;
+      padding: 3px;
+      margin-bottom: 28px;
+    }
+    .tab-btn {
+      padding: 9px;
+      border: none; border-radius: 9px;
+      background: transparent;
+      color: var(--fp-muted);
+      font-size: 13.5px; font-weight: 600; font-family: inherit;
+      cursor: pointer;
+      transition: background .15s, color .15s, box-shadow .15s;
+    }
+    .tab-btn.active {
+      background: #fff;
+      color: #0d0e14;
+      box-shadow: 0 1px 6px rgba(0,0,0,0.35);
+    }
+
+    /* 폼 */
+    .fpanel { display: none; }
+    .fpanel.on { display: block; }
+
+    .fg { margin-bottom: 13px; }
+    .fl {
+      display: block;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--fp-muted);
+      margin-bottom: 7px;
+    }
+    .fl .hint { text-transform: none; font-weight: 400; opacity: .7; letter-spacing: 0; }
+
+    input[type=text], input[type=email], input[type=password] {
+      width: 100%; height: 42px;
+      padding: 0 14px;
+      border: 1px solid var(--fp-line);
+      border-radius: 10px;
+      background: var(--fp-surf);
+      color: var(--fp-fg);
+      font-size: 14px; font-family: inherit;
+      outline: none;
+      transition: border-color .15s;
+      -webkit-appearance: none;
+    }
+    input:-webkit-autofill {
+      -webkit-box-shadow: 0 0 0 100px var(--fp-surf2) inset !important;
+      -webkit-text-fill-color: var(--fp-fg) !important;
+    }
+    input:focus { border-color: rgba(108,92,231,0.6); }
+    input::placeholder { color: rgba(255,255,255,0.2); }
+
+    .remember {
+      display: flex; align-items: center; gap: 8px;
+      margin: 13px 0 20px;
+      font-size: 13px; color: var(--fp-muted); cursor: pointer;
+    }
+    .remember input { width: 14px; height: 14px; accent-color: var(--brand); cursor: pointer; }
+
+    .submit {
+      width: 100%; height: 44px;
+      border: none; border-radius: 10px;
+      background: #fff; color: #0d0e14;
+      font-size: 14px; font-weight: 700; font-family: inherit;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: opacity .15s, transform .12s;
+    }
+    .submit:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
+    .submit:disabled { opacity: .35; cursor: not-allowed; }
+    .submit svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+    .msg {
+      margin-top: 12px; padding: 10px 14px;
+      border-radius: 10px; font-size: 13px; font-weight: 500;
+      display: none; line-height: 1.5;
+    }
+    .msg.err { background: rgba(229,62,62,.1); color: #fc8181; display: block; }
+    .msg.ok  { background: rgba(72,187,120,.08); color: #68d391; display: block; }
+
+    /* DSHS 하단 */
+    .dshs-footer {
+      margin-top: auto;
+      padding-top: 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+    .dshs-footer img { height: 22px; width: auto; opacity: .22; transition: opacity .2s; filter: invert(1); }
+    .dshs-footer img:hover { opacity: .4; }
+    .dshs-footer .copy { font-size: 11px; color: rgba(255,255,255,0.2); }
+
+    /* ── 반응형 ── */
+    @media (max-width: 780px) {
+      body { grid-template-columns: 1fr; }
+      .brand-panel { min-height: 220px; padding: 28px 24px; justify-content: flex-end; }
+      .art-label { left: 24px; }
+      .art-label h2 { font-size: 22px; }
+      .form-panel-wrap { padding: 36px 24px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── 왼쪽: 브랜드 패널 ─────────────────────────────────────────── -->
+  <div class="brand-panel">
+    <div class="art-canvas"><canvas id="art"></canvas></div>
+
+    <div class="brand-top brand-logo">
+      <!-- ds-go 로고 (화이트) -->
+      <svg viewBox="0 0 260 200" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="ds-go">
+        <rect x="12" y="10" width="14" height="160" fill="#ffffff"/>
+        <text x="44" y="90" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="900" font-size="62" fill="#ffffff" letter-spacing="-2">ds</text>
+        <text x="38" y="162" font-family="'Arial Black','Helvetica Neue',sans-serif" font-weight="900" font-size="86" fill="#ffffff" letter-spacing="-3">GO</text>
+        <circle cx="232" cy="148" r="16" fill="#ffffff"/>
+        <text x="44" y="192" font-family="Arial,sans-serif" font-weight="400" font-size="18" fill="#ffffff" letter-spacing="5">FOR DSHS</text>
+      </svg>
+    </div>
+
+    <div class="art-label">
+      <div class="eyebrow">One Account · Every Service</div>
+      <h2>더 나은 작업을 위한<br /><span class="accent">하나의 출발점</span></h2>
+      <p>ds-go 계정 하나로 Deepthink, Onsheet,<br />Oryaform, QRLink 모든 서비스를 이어서 사용하세요.</p>
+    </div>
+
+  </div>
+
+  <!-- ── 오른쪽: 폼 패널 ──────────────────────────────────────────── -->
+  <div class="form-panel-wrap">
+    <div class="form-box">
+      <!-- 로고 헤더 -->
+      <div class="form-logos">
+        <div class="logo-circle">
+          <img src="/scivill-emblem.png" alt="Scivill" />
+        </div>
+        <div class="form-logo-title">ds-go <span>account</span></div>
+      </div>
+
+      <!-- SSO 배너 -->
+      <div class="sso-strip" id="sso-strip">
+        <div class="sso-strip-icon">
+          <svg viewBox="0 0 24 24"><path d="M8 11V8a4 4 0 0 1 8 0v3M7 11h10a2 2 0 0 1 2 2v6H5v-6a2 2 0 0 1 2-2Z"/><path d="M12 15v1"/></svg>
+        </div>
+        <div class="sso-strip-text">
+          <div class="s-title">서비스 연결 로그인</div>
+          <div class="s-sub" id="sso-sub">로그인 후 자동으로 이동합니다.</div>
+        </div>
+      </div>
+
+      <!-- 탭 -->
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('login')"    id="t-login">로그인</button>
+        <button class="tab-btn"        onclick="switchTab('register')" id="t-reg">회원가입</button>
+      </div>
+
+      <!-- 로그인 -->
+      <div class="fpanel on" id="p-login">
+        <form onsubmit="handleLogin(event)" novalidate>
+          <div class="fg">
+            <label class="fl" for="l-id">아이디 / 이메일</label>
+            <input type="text" id="l-id" placeholder="아이디 또는 이메일" autocomplete="username" required />
+          </div>
+          <div class="fg">
+            <label class="fl" for="l-pw">비밀번호</label>
+            <input type="password" id="l-pw" placeholder="비밀번호" autocomplete="current-password" required />
+          </div>
+          <label class="remember">
+            <input type="checkbox" id="remember" />
+            로그인 상태 유지
+          </label>
+          <button type="submit" class="submit" id="login-btn">
+            로그인
+            <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg>
+          </button>
+          <div class="msg" id="login-msg"></div>
+        </form>
+      </div>
+
+      <!-- 회원가입 -->
+      <div class="fpanel" id="p-reg">
+        <form onsubmit="handleRegister(event)" novalidate>
+          <div class="fg">
+            <label class="fl" for="r-un">아이디 <span class="hint">영문·숫자·_ 3~20자</span></label>
+            <input type="text" id="r-un" placeholder="아이디" autocomplete="username" required />
+          </div>
+          <div class="fg">
+            <label class="fl" for="r-dn">표시 이름</label>
+            <input type="text" id="r-dn" placeholder="홍길동" autocomplete="name" required />
+          </div>
+          <div class="fg">
+            <label class="fl" for="r-em">이메일 <span class="hint">선택</span></label>
+            <input type="email" id="r-em" placeholder="example@dshs.kr" autocomplete="email" />
+          </div>
+          <div class="fg" style="margin-bottom:20px">
+            <label class="fl" for="r-pw">비밀번호 <span class="hint">6자 이상</span></label>
+            <input type="password" id="r-pw" placeholder="비밀번호" autocomplete="new-password" required />
+          </div>
+          <button type="submit" class="submit" id="reg-btn">
+            계정 만들기
+            <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg>
+          </button>
+          <div class="msg" id="reg-msg"></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 대전대신고 로고 + 저작권 -->
+    <div class="dshs-footer">
+      <img src="/daeshin-logo.png" alt="대전대신고등학교" />
+      <span class="copy">© 2026 Scivill · ds-go</span>
+    </div>
+  </div>
+
+  <script>
+    // ── 미디어 아트 (흰색 유성) ──────────────────────────────────────────────
+    const canvas = document.getElementById('art');
+    const ctx    = canvas.getContext('2d');
+    let W, H, comets = [];
+    const COLORS = ['255,255,255','245,245,255','235,240,255','255,252,255','240,248,255'];
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      W = canvas.width  = rect.width;
+      H = canvas.height = rect.height;
+      comets = Array.from({ length: 28 }, () => spawnComet(true));
+    }
+
+    function spawnComet(init) {
+      const speed = Math.random() * 4 + 2;
+      const angle = (Math.random() * 0.5 + 0.6);
+      return {
+        x:     init ? Math.random() * W : Math.random() * W * 0.6 - W * 0.1,
+        y:     init ? Math.random() * H : -20,
+        vx:    Math.cos(angle) * speed,
+        vy:    Math.sin(angle) * speed,
+        len:   Math.random() * 140 + 60,
+        alpha: Math.random() * 0.55 + 0.25,
+        w:     Math.random() * 1.6 + 0.3,
+        col:   COLORS[Math.floor(Math.random() * COLORS.length)],
+      };
+    }
+
+    function draw() {
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.fillRect(0, 0, W, H);
+      comets.forEach((c, i) => {
+        const spd  = Math.hypot(c.vx, c.vy);
+        const tx   = c.x - c.vx / spd * c.len;
+        const ty   = c.y - c.vy / spd * c.len;
+        const grad = ctx.createLinearGradient(tx, ty, c.x, c.y);
+        grad.addColorStop(0, `rgba(${c.col},0)`);
+        grad.addColorStop(1, `rgba(${c.col},${c.alpha})`);
+        ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(c.x, c.y);
+        ctx.strokeStyle = grad; ctx.lineWidth = c.w; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.beginPath(); ctx.arc(c.x, c.y, c.w * 1.8, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${c.col},${c.alpha * 0.9})`; ctx.fill();
+        c.x += c.vx; c.y += c.vy;
+        if (c.x > W + 150 || c.y > H + 150) comets[i] = spawnComet(false);
+      });
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+
+    // 테마 없음 — 항상 다크
+
+    // ── SSO ──────────────────────────────────────────────────────────────────
+    const params      = new URLSearchParams(location.search);
+    const redirectUri = params.get('redirect_uri') || '';
+    if (redirectUri) {
+      try {
+        const host = new URL(redirectUri).hostname;
+        document.getElementById('sso-strip').classList.add('on');
+        document.getElementById('sso-sub').textContent = host + ' 서비스로 이동합니다.';
+      } catch {}
+    }
+
+    // ── 탭 ───────────────────────────────────────────────────────────────────
+    function switchTab(tab) {
+      const login = tab === 'login';
+      document.getElementById('t-login').classList.toggle('active', login);
+      document.getElementById('t-reg').classList.toggle('active', !login);
+      document.getElementById('p-login').classList.toggle('on', login);
+      document.getElementById('p-reg').classList.toggle('on', !login);
+    }
+
+    // ── 에러 맵 ──────────────────────────────────────────────────────────────
+    const ERR = {
+      missing_fields:      '모든 필드를 입력해주세요.',
+      invalid_credentials: '아이디 또는 비밀번호가 올바르지 않습니다.',
+      invalid_username:    '아이디는 영문·숫자·_로 3~20자여야 합니다.',
+      invalid_password:    '비밀번호는 6자 이상이어야 합니다.',
+      already_exists:      '이미 사용 중인 아이디 또는 이메일입니다.',
+      too_many_attempts:   '시도 횟수 초과. 15분 후 다시 시도하세요.',
+      too_many_requests:   '요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
+      banned:              '계정이 정지되었습니다. 관리자에게 문의하세요.',
+      server_error:        '서버 오류. 잠시 후 다시 시도하세요.',
+    };
+    function showMsg(id, text, type) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className   = 'msg' + (text ? ' ' + type : '');
+    }
+
+    // ── SSO 리다이렉트 ────────────────────────────────────────────────────────
+    async function afterAuth() {
+      if (redirectUri) {
+        const r = await fetch('/api/auth/sso/issue?redirect_uri=' + encodeURIComponent(redirectUri), { credentials: 'include' });
+        const d = await r.json();
+        if (d.ok) { location.href = d.redirectUrl; return; }
+      }
+      location.href = '/';
+    }
+
+    // ── 로그인 ───────────────────────────────────────────────────────────────
+    const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('login-btn');
+      btn.disabled = true;
+      btn.innerHTML = '로그인 중… ' + ARROW;
+      showMsg('login-msg', '', '');
+      try {
+        const res  = await fetch('/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+          body: JSON.stringify({
+            username: document.getElementById('l-id').value.trim(),
+            password: document.getElementById('l-pw').value,
+            remember: document.getElementById('remember').checked,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) { showMsg('login-msg', '로그인 성공! 이동 중…', 'ok'); await afterAuth(); }
+        else showMsg('login-msg', ERR[data.error] || '알 수 없는 오류.', 'err');
+      } catch { showMsg('login-msg', '네트워크 오류가 발생했습니다.', 'err'); }
+      finally { btn.disabled = false; btn.innerHTML = '로그인 ' + ARROW; }
+    }
+
+    // ── 회원가입 ─────────────────────────────────────────────────────────────
+    async function handleRegister(e) {
+      e.preventDefault();
+      const btn = document.getElementById('reg-btn');
+      btn.disabled = true;
+      btn.innerHTML = '처리 중… ' + ARROW;
+      showMsg('reg-msg', '', '');
+      try {
+        const res  = await fetch('/api/auth/register', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+          body: JSON.stringify({
+            username:    document.getElementById('r-un').value.trim(),
+            displayName: document.getElementById('r-dn').value.trim(),
+            email:       document.getElementById('r-em').value.trim(),
+            password:    document.getElementById('r-pw').value,
+          }),
+        });
+        const data = await res.json();
+        if (data.ok) { showMsg('reg-msg', '계정이 만들어졌습니다! 이동 중…', 'ok'); await afterAuth(); }
+        else showMsg('reg-msg', ERR[data.error] || '알 수 없는 오류.', 'err');
+      } catch { showMsg('reg-msg', '네트워크 오류가 발생했습니다.', 'err'); }
+      finally { btn.disabled = false; btn.innerHTML = '계정 만들기 ' + ARROW; }
+    }
+
+    // ── 이미 로그인 상태 ──────────────────────────────────────────────────────
+    (async () => {
+      try {
+        const r = await fetch('/api/auth/me', { credentials: 'include' });
+        if (r.ok) await afterAuth();
+      } catch {}
+    })();
+  </script>
+
+  <!-- ── 푸터 ── -->
+  <footer style="
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 100;
+    background: rgba(8,8,14,0.96);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 24px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  ">
+    <span style="font-size: 11px; color: rgba(255,255,255,0.2); letter-spacing: 0.03em;">
+      © 2026 Scivill. All rights reserved.
+    </span>
+    <nav style="display: flex; gap: 20px; align-items: center;">
+      <a href="https://scivill.vercel.app/terms" target="_blank" rel="noopener noreferrer"
+        style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"
+        onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.28)'">
+        이용약관
+      </a>
+      <a href="https://scivill.vercel.app/privacy" target="_blank" rel="noopener noreferrer"
+        style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"
+        onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.28)'">
+        개인정보처리방침
+      </a>
+      <a href="https://scivill.vercel.app/licenses" target="_blank" rel="noopener noreferrer"
+        style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"
+        onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.28)'">
+        오픈소스 라이선스
+      </a>
+    </nav>
+  </footer>
+</body>
+</html>
