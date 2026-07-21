@@ -416,12 +416,12 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     // 4) 세션 발급
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
-    const [accessToken] = await Promise.all([
+    const [svAccessToken] = await Promise.all([
       signAccess({ userId: user.id, role: user.role, sessionVersion: sv }),
       storeRefresh(refreshId, { userId: user.id, role: user.role, remember: true,
         sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_LONG * 1000 }),
     ]);
-    setAccessCookie(res, accessToken);
+    setAccessCookie(res, svAccessToken);
     setRefreshCookie(res, refreshId, true);
 
     // 5) SSO redirect_uri가 있으면 토큰 발급 후 서비스로, 없으면 홈으로
