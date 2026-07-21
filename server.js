@@ -266,8 +266,9 @@ app.post('/api/auth/logout', async (req, res) => {
   const cookies = parseCookies(req);
   const refreshId = cookies['sv_refresh'];
   if (refreshId) await deleteRefresh(refreshId).catch(() => {});
-  res.clearCookie('sv_access',  { path: '/' });
-  res.clearCookie('sv_refresh', { path: '/' });
+  const cookieOpts = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' };
+  res.clearCookie('sv_access',  cookieOpts);
+  res.clearCookie('sv_refresh', cookieOpts);
   res.json({ ok: true });
 });
 
