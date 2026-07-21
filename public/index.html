@@ -122,9 +122,9 @@
 
     .form-box {
       width: 100%;
-      max-width: 360px;
+      max-width: 320px;
       margin: auto 0;
-      padding: 48px 0 32px;
+      padding: 24px 0 16px;
     }
 
     /* 로고 헤더 */
@@ -132,15 +132,15 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 14px;
-      margin-bottom: 36px;
+      gap: 8px;
+      margin-bottom: 18px;
     }
     .logo-circle {
       display: flex; align-items: center; justify-content: center;
     }
-    .logo-circle img { width: 110px; height: auto; object-fit: contain; }
+    .logo-circle img { width: 64px; height: auto; object-fit: contain; }
     .form-logo-title {
-      font-size: 18px; font-weight: 700;
+      font-size: 15px; font-weight: 700;
       color: var(--fp-fg); letter-spacing: -0.01em;
     }
     .form-logo-title span { font-weight: 400; color: var(--fp-muted); }
@@ -149,16 +149,16 @@
     .sso-strip {
       display: none;
       align-items: center;
-      gap: 11px;
-      padding: 11px 14px;
+      gap: 9px;
+      padding: 8px 12px;
       border: 1px solid rgba(108,92,231,0.3);
-      border-radius: 12px;
+      border-radius: 10px;
       background: rgba(108,92,231,0.07);
-      margin-bottom: 20px;
+      margin-bottom: 14px;
     }
     .sso-strip.on { display: flex; }
     .sso-strip-icon {
-      width: 32px; height: 32px; flex-shrink: 0;
+      width: 26px; height: 26px; flex-shrink: 0;
       border-radius: 8px;
       background: rgba(255,255,255,0.08);
       display: grid; place-items: center;
@@ -174,16 +174,16 @@
       gap: 3px;
       background: rgba(255,255,255,0.05);
       border: 1px solid var(--fp-line);
-      border-radius: 12px;
+      border-radius: 11px;
       padding: 3px;
-      margin-bottom: 28px;
+      margin-bottom: 16px;
     }
     .tab-btn {
-      padding: 9px;
-      border: none; border-radius: 9px;
+      padding: 7px;
+      border: none; border-radius: 8px;
       background: transparent;
       color: var(--fp-muted);
-      font-size: 13.5px; font-weight: 600; font-family: inherit;
+      font-size: 13px; font-weight: 600; font-family: inherit;
       cursor: pointer;
       transition: background .15s, color .15s, box-shadow .15s;
     }
@@ -197,24 +197,24 @@
     .fpanel { display: none; }
     .fpanel.on { display: block; }
 
-    .fg { margin-bottom: 13px; }
+    .fg { margin-bottom: 10px; }
     .fl {
       display: block;
-      font-size: 11px; font-weight: 600;
+      font-size: 10.5px; font-weight: 600;
       letter-spacing: 0.06em; text-transform: uppercase;
       color: var(--fp-muted);
-      margin-bottom: 7px;
+      margin-bottom: 5px;
     }
     .fl .hint { text-transform: none; font-weight: 400; opacity: .7; letter-spacing: 0; }
 
     input[type=text], input[type=email], input[type=password] {
-      width: 100%; height: 42px;
-      padding: 0 14px;
+      width: 100%; height: 37px;
+      padding: 0 12px;
       border: 1px solid var(--fp-line);
-      border-radius: 10px;
+      border-radius: 9px;
       background: var(--fp-surf);
       color: var(--fp-fg);
-      font-size: 14px; font-family: inherit;
+      font-size: 13.5px; font-family: inherit;
       outline: none;
       transition: border-color .15s;
       -webkit-appearance: none;
@@ -228,16 +228,16 @@
 
     .remember {
       display: flex; align-items: center; gap: 8px;
-      margin: 13px 0 20px;
-      font-size: 13px; color: var(--fp-muted); cursor: pointer;
+      margin: 10px 0 14px;
+      font-size: 12.5px; color: var(--fp-muted); cursor: pointer;
     }
     .remember input { width: 14px; height: 14px; accent-color: var(--brand); cursor: pointer; }
 
     .submit {
-      width: 100%; height: 44px;
-      border: none; border-radius: 10px;
+      width: 100%; height: 39px;
+      border: none; border-radius: 9px;
       background: #fff; color: #0d0e14;
-      font-size: 14px; font-weight: 700; font-family: inherit;
+      font-size: 13.5px; font-weight: 700; font-family: inherit;
       cursor: pointer;
       display: flex; align-items: center; justify-content: center; gap: 7px;
       transition: opacity .15s, transform .12s;
@@ -254,10 +254,13 @@
     .msg.err { background: rgba(229,62,62,.1); color: #fc8181; display: block; }
     .msg.ok  { background: rgba(72,187,120,.08); color: #68d391; display: block; }
 
+    .logged-in { display: none; text-align: center; }
+    .logged-in.on { display: block; }
+
     /* DSHS 하단 */
     .dshs-footer {
       margin-top: auto;
-      padding-top: 48px;
+      padding-top: 24px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -324,6 +327,15 @@
         </div>
       </div>
 
+      <!-- 이미 로그인된 상태 -->
+      <div class="logged-in" id="logged-in-box">
+        <p style="font-size:14px;color:var(--fp-fg);margin-bottom:16px;">
+          <b id="logged-in-name"></b>님으로 로그인되어 있습니다.
+        </p>
+        <button type="button" class="submit" id="logout-btn">로그아웃</button>
+      </div>
+
+      <div id="auth-forms">
       <!-- 탭 -->
       <div class="tabs">
         <button class="tab-btn active" onclick="switchTab('login')"    id="t-login">로그인</button>
@@ -351,7 +363,7 @@
           </button>
           <div class="msg" id="login-msg"></div>
         </form>
-        <div style="display:flex;align-items:center;gap:10px;margin:16px 0 4px;">
+        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;">
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
           <span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span>
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
@@ -387,7 +399,7 @@
           </button>
           <div class="msg" id="reg-msg"></div>
         </form>
-        <div style="display:flex;align-items:center;gap:10px;margin:16px 0 4px;">
+        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;">
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
           <span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span>
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
@@ -396,6 +408,7 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
           bytenode 계정으로 회원가입
         </button>
+      </div>
       </div>
     </div>
 
@@ -493,6 +506,22 @@
       banned:              '계정이 정지되었습니다. 관리자에게 문의하세요.',
       server_error:        '서버 오류. 잠시 후 다시 시도하세요.',
     };
+    const BN_ERR = {
+      not_registered: '가입된 계정이 아닙니다. 먼저 bytenode 계정으로 회원가입해주세요.',
+      already_registered: '이미 가입된 계정입니다. bytenode 계정으로 로그인해주세요.',
+      bytenode_error: 'bytenode 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
+    };
+    (() => {
+      const bnErr = params.get('bn_error');
+      if (!bnErr) return;
+      if (bnErr === 'not_registered') switchTab('login');
+      else switchTab('register');
+      showMsg(bnErr === 'not_registered' ? 'login-msg' : 'reg-msg', BN_ERR[bnErr] || BN_ERR.bytenode_error, 'err');
+      const url = new URL(location.href);
+      url.searchParams.delete('bn_error');
+      history.replaceState({}, '', url);
+    })();
+
     function showMsg(id, text, type) {
       const el = document.getElementById(id);
       el.textContent = text;
@@ -510,13 +539,16 @@
     }
 
     // ── Bytenode OAuth ───────────────────────────────────────────────────────
-    function goBytеnode() {
+    function goBytenode(mode) {
       const params = new URLSearchParams(window.location.search);
       const ru = params.get('redirect_uri') || '';
-      window.location.href = '/api/auth/bytenode' + (ru ? '?redirect_uri=' + encodeURIComponent(ru) : '');
+      const qs = new URLSearchParams();
+      qs.set('mode', mode);
+      if (ru) qs.set('redirect_uri', ru);
+      window.location.href = '/api/auth/bytenode?' + qs.toString();
     }
-    document.getElementById('bytenode-btn').addEventListener('click', goBytеnode);
-    document.getElementById('bytenode-reg-btn').addEventListener('click', goBytеnode);
+    document.getElementById('bytenode-btn').addEventListener('click', () => goBytenode('login'));
+    document.getElementById('bytenode-reg-btn').addEventListener('click', () => goBytenode('register'));
 
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
@@ -566,14 +598,27 @@
       finally { btn.disabled = false; btn.innerHTML = '계정 만들기 ' + ARROW; }
     }
 
-    // ── 이미 로그인 상태 (SSO redirect_uri 있을 때만 자동 처리) ──────────────
+    // ── 이미 로그인 상태 확인 ──────────────────────────────────────────────────
+    // redirect_uri가 있으면 SSO로 바로 넘기고, 없으면(이 계정 페이지에 직접 온 경우)
+    // 로그인 폼 대신 "로그인됨" 화면을 보여준다 — 예전엔 여기서 아무 처리도 안 해서
+    // bytenode 로그인이 실제로 성공해도 로그인 폼만 계속 떠 있었다.
     (async () => {
-      if (!redirectUri) return;
       try {
         const r = await fetch('/api/auth/me', { credentials: 'include' });
-        if (r.ok) await afterAuth();
+        if (!r.ok) return;
+        if (redirectUri) { await afterAuth(); return; }
+        const { user } = await r.json();
+        document.getElementById('logged-in-name').textContent = user.displayName || user.username;
+        document.getElementById('logged-in-box').classList.add('on');
+        document.getElementById('auth-forms').style.display = 'none';
+        document.getElementById('sso-strip').classList.remove('on');
       } catch {}
     })();
+
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch {}
+      location.reload();
+    });
   </script>
 
   <!-- ── 푸터 ── -->

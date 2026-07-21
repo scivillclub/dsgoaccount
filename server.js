@@ -359,7 +359,8 @@ const BYTENODE_USERINFO_URL  = 'https://bytenode-account.vercel.app/userinfo';
 // GET /api/auth/bytenode — bytenode authorize로 리다이렉트
 app.get('/api/auth/bytenode', (req, res) => {
   const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
-  const state = Buffer.from(JSON.stringify({ r: req.query.redirect_uri || '/' })).toString('base64url');
+  const mode = req.query.mode === 'register' ? 'register' : 'login';
+  const state = Buffer.from(JSON.stringify({ r: req.query.redirect_uri || '/', mode })).toString('base64url');
   const url = `${BYTENODE_AUTH_URL}?response_type=code&client_id=${BYTENODE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
   res.redirect(url);
 });
@@ -371,6 +372,21 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
 
   const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
 
+  // state에서 원래 redirect_uri + 로그인/가입 의도(mode) 복원
+  let originalRedirectUri = '';
+  let mode = 'login';
+  try {
+    const parsed = JSON.parse(Buffer.from(state, 'base64url').toString());
+    originalRedirectUri = parsed.r || '';
+    mode = parsed.mode === 'register' ? 'register' : 'login';
+  } catch {}
+
+  function backToLogin(bnError) {
+    const qs = new URLSearchParams({ bn_error: bnError });
+    if (originalRedirectUri && originalRedirectUri !== '/') qs.set('redirect_uri', originalRedirectUri);
+    return res.redirect('/?' + qs.toString());
+  }
+
   try {
     // 1) 코드 → 토큰
     const tokenRes = await fetch(BYTENODE_TOKEN_URL, {
@@ -378,40 +394,51 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ grant_type: 'authorization_code', code, client_id: BYTENODE_CLIENT_ID, client_secret: BYTENODE_CLIENT_SECRET, redirect_uri }),
     });
-    const tokenData = await tokenRes.json();
-    const accessToken = tokenData.access_token || tokenData.token;
+    const tokenData = await tokenRes.json().catch(() => null);
+    const accessToken = tokenData && (tokenData.access_token || tokenData.token);
     if (!accessToken) {
       console.error('[bytenode/callback] token response:', JSON.stringify(tokenData));
-      return res.status(400).send('token error: ' + JSON.stringify(tokenData));
+      return backToLogin('bytenode_error');
     }
 
     // 2) 유저 정보
     const userRes = await fetch(BYTENODE_USERINFO_URL, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const bnUser = await userRes.json();
-    console.error('[bytenode/callback] userinfo:', JSON.stringify(bnUser));
-    const bnId = String(bnUser.id || bnUser.userId || bnUser.sub || bnUser.user?.id || '');
-    if (!bnId) return res.status(400).send('userinfo error: ' + JSON.stringify(bnUser));
-
-    // 3) Firestore에서 기존 계정 찾기 or 생성
-    const users = await getUsers();
-    let user = users.find(u => u.bytенodeId === bnId);
-    if (!user) {
-      const id = uuid();
-      const username = `bn_${bnId}`.slice(0, 20).replace(/[^a-zA-Z0-9_]/g, '_');
-      user = {
-        id,
-        username,
-        email: bnUser.email || '',
-        displayName: bnUser.displayName || bnUser.username || username,
-        role: 'user',
-        isBanned: false,
-        createdAt: Date.now(),
-        bytенodeId: bnId,
-      };
-      await saveUsers([...users, user]);
+    const bnUser = await userRes.json().catch(() => null);
+    const bnId = String(bnUser?.id || bnUser?.userId || bnUser?.sub || bnUser?.user?.id || '');
+    if (!bnId) {
+      console.error('[bytenode/callback] userinfo error:', JSON.stringify(bnUser));
+      return backToLogin('bytenode_error');
     }
+
+    // 3) Firestore에서 기존 계정 찾기
+    const users = await getUsers();
+    let user = users.find(u => u.bytenodeId === bnId);
+
+    if (mode === 'login') {
+      // 로그인 의도인데 연결된 계정이 없으면 새로 만들지 않고 에러로 돌려보낸다
+      if (!user) return backToLogin('not_registered');
+    } else {
+      // 가입 의도인데 이미 연결된 계정이 있으면 그냥 로그인만 시켜준다
+      if (!user) {
+        const id = uuid();
+        const username = `bn_${bnId}`.slice(0, 20).replace(/[^a-zA-Z0-9_]/g, '_');
+        user = {
+          id,
+          username,
+          email: bnUser.email || '',
+          displayName: bnUser.displayName || bnUser.username || username,
+          role: 'user',
+          isBanned: false,
+          createdAt: Date.now(),
+          bytenodeId: bnId,
+        };
+        await saveUsers([...users, user]);
+      }
+    }
+
+    if (user.isBanned) return res.status(403).send('계정이 정지되었습니다.');
 
     // 4) 세션 발급
     const sv = await getSessionVersion();
@@ -424,10 +451,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     setAccessCookie(res, svAccessToken);
     setRefreshCookie(res, refreshId, true);
 
-    // 5) state에서 원래 redirect_uri 복원
-    let originalRedirectUri = '';
-    try { originalRedirectUri = JSON.parse(Buffer.from(state, 'base64url').toString()).r || ''; } catch {}
-
+    // 5) 원래 redirect_uri로 복귀
     if (originalRedirectUri && originalRedirectUri !== '/') {
       // SSO 콜백 URL이면 토큰 직접 발급
       try {
