@@ -566,8 +566,9 @@
       finally { btn.disabled = false; btn.innerHTML = '계정 만들기 ' + ARROW; }
     }
 
-    // ── 이미 로그인 상태 ──────────────────────────────────────────────────────
+    // ── 이미 로그인 상태 (SSO redirect_uri 있을 때만 자동 처리) ──────────────
     (async () => {
+      if (!redirectUri) return;
       try {
         const r = await fetch('/api/auth/me', { credentials: 'include' });
         if (r.ok) await afterAuth();
