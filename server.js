@@ -424,21 +424,22 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     setAccessCookie(res, svAccessToken);
     setRefreshCookie(res, refreshId, true);
 
-    // 5) SSO redirect_uri가 있으면 토큰 발급 후 서비스로, 없으면 홈으로
+    // 5) state에서 원래 redirect_uri 복원
     let originalRedirectUri = '';
     try { originalRedirectUri = JSON.parse(Buffer.from(state, 'base64url').toString()).r || ''; } catch {}
 
     if (originalRedirectUri && originalRedirectUri !== '/') {
+      // SSO 콜백 URL이면 토큰 직접 발급
       try {
         const url = new URL(originalRedirectUri);
-        const allowed = ALLOWED_ORIGINS.includes(url.origin) && url.pathname.startsWith('/api/auth/sso');
-        if (allowed || process.env.NODE_ENV !== 'production') {
+        if (url.pathname.startsWith('/api/auth/sso')) {
           const ssoToken = await signSSO(user.id, user.role);
           url.searchParams.set('token', ssoToken);
           return res.redirect(url.toString());
         }
       } catch {}
-      return res.redirect('/');
+      // 그 외 → redirect_uri 유지하며 홈으로 (프론트가 afterAuth로 처리)
+      return res.redirect('/?redirect_uri=' + encodeURIComponent(originalRedirectUri));
     }
     res.redirect('/');
   } catch (e) {
