@@ -387,6 +387,15 @@
           </button>
           <div class="msg" id="reg-msg"></div>
         </form>
+        <div style="display:flex;align-items:center;gap:10px;margin:16px 0 4px;">
+          <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
+          <span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span>
+          <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
+        </div>
+        <button type="button" id="bytenode-reg-btn" class="submit" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
+          bytenode 계정으로 회원가입
+        </button>
       </div>
     </div>
 
@@ -497,15 +506,17 @@
         const d = await r.json();
         if (d.ok) { location.href = d.redirectUrl; return; }
       }
-      location.href = '/';
+      showMsg('login-msg', '로그인되었습니다.', 'ok');
     }
 
     // ── Bytenode OAuth ───────────────────────────────────────────────────────
-    document.getElementById('bytenode-btn').addEventListener('click', function() {
+    function goBytеnode() {
       const params = new URLSearchParams(window.location.search);
-      const redirectUri = params.get('redirect_uri') || '';
-      window.location.href = '/api/auth/bytenode' + (redirectUri ? '?redirect_uri=' + encodeURIComponent(redirectUri) : '');
-    });
+      const ru = params.get('redirect_uri') || '';
+      window.location.href = '/api/auth/bytenode' + (ru ? '?redirect_uri=' + encodeURIComponent(ru) : '');
+    }
+    document.getElementById('bytenode-btn').addEventListener('click', goBytеnode);
+    document.getElementById('bytenode-reg-btn').addEventListener('click', goBytеnode);
 
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
