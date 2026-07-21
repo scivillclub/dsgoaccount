@@ -379,15 +379,20 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       body: JSON.stringify({ grant_type: 'authorization_code', code, client_id: BYTENODE_CLIENT_ID, client_secret: BYTENODE_CLIENT_SECRET, redirect_uri }),
     });
     const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.status(400).send('token error');
+    const accessToken = tokenData.access_token || tokenData.token;
+    if (!accessToken) {
+      console.error('[bytenode/callback] token response:', JSON.stringify(tokenData));
+      return res.status(400).send('token error: ' + JSON.stringify(tokenData));
+    }
 
     // 2) 유저 정보
     const userRes = await fetch(BYTENODE_USERINFO_URL, {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
     const bnUser = await userRes.json();
-    const bnId = String(bnUser.id || bnUser.userId || bnUser.sub || '');
-    if (!bnId) return res.status(400).send('userinfo error');
+    console.error('[bytenode/callback] userinfo:', JSON.stringify(bnUser));
+    const bnId = String(bnUser.id || bnUser.userId || bnUser.sub || bnUser.user?.id || '');
+    if (!bnId) return res.status(400).send('userinfo error: ' + JSON.stringify(bnUser));
 
     // 3) Firestore에서 기존 계정 찾기 or 생성
     const users = await getUsers();
