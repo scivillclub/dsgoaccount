@@ -419,10 +419,23 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshId, true);
 
-    // 5) 원래 목적지로 리다이렉트
-    let dest = '/';
-    try { dest = JSON.parse(Buffer.from(state, 'base64url').toString()).r || '/'; } catch {}
-    res.redirect(dest);
+    // 5) SSO redirect_uri가 있으면 토큰 발급 후 서비스로, 없으면 홈으로
+    let originalRedirectUri = '';
+    try { originalRedirectUri = JSON.parse(Buffer.from(state, 'base64url').toString()).r || ''; } catch {}
+
+    if (originalRedirectUri && originalRedirectUri !== '/') {
+      try {
+        const url = new URL(originalRedirectUri);
+        const allowed = ALLOWED_ORIGINS.includes(url.origin) && url.pathname.startsWith('/api/auth/sso');
+        if (allowed || process.env.NODE_ENV !== 'production') {
+          const ssoToken = await signSSO(user.id, user.role);
+          url.searchParams.set('token', ssoToken);
+          return res.redirect(url.toString());
+        }
+      } catch {}
+      return res.redirect('/');
+    }
+    res.redirect('/');
   } catch (e) {
     console.error('[bytenode/callback]', e);
     res.status(500).send('server error');
