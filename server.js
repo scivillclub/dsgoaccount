@@ -348,6 +348,86 @@ app.get('/api/auth/sso/verify', async (req, res) => {
   res.json({ ok: true, userId: payload.userId, role: payload.role });
 });
 
+// ── Bytenode OAuth ────────────────────────────────────────────────────────────
+const BYTENODE_CLIENT_ID     = process.env.BYTENODE_CLIENT_ID;
+const BYTENODE_CLIENT_SECRET = process.env.BYTENODE_CLIENT_SECRET;
+const BYTENODE_AUTH_URL      = 'https://bytenode-account.vercel.app/authorize';
+const BYTENODE_TOKEN_URL     = 'https://bytenode-account.vercel.app/token';
+const BYTENODE_USERINFO_URL  = 'https://bytenode-account.vercel.app/userinfo';
+
+// GET /api/auth/bytenode — bytenode authorize로 리다이렉트
+app.get('/api/auth/bytenode', (req, res) => {
+  const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
+  const state = Buffer.from(JSON.stringify({ r: req.query.redirect_uri || '/' })).toString('base64url');
+  const url = `${BYTENODE_AUTH_URL}?response_type=code&client_id=${BYTENODE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
+  res.redirect(url);
+});
+
+// GET /api/auth/bytenode/callback — 코드 교환 후 로그인 처리
+app.get('/api/auth/bytenode/callback', async (req, res) => {
+  const { code, state } = req.query;
+  if (!code) return res.status(400).send('missing code');
+
+  const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
+
+  try {
+    // 1) 코드 → 토큰
+    const tokenRes = await fetch(BYTENODE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code, client_id: BYTENODE_CLIENT_ID, client_secret: BYTENODE_CLIENT_SECRET, redirect_uri }),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) return res.status(400).send('token error');
+
+    // 2) 유저 정보
+    const userRes = await fetch(BYTENODE_USERINFO_URL, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const bnUser = await userRes.json();
+    const bnId = String(bnUser.id || bnUser.userId || bnUser.sub || '');
+    if (!bnId) return res.status(400).send('userinfo error');
+
+    // 3) Firestore에서 기존 계정 찾기 or 생성
+    const users = await getUsers();
+    let user = users.find(u => u.bytенodeId === bnId);
+    if (!user) {
+      const id = uuid();
+      const username = `bn_${bnId}`.slice(0, 20).replace(/[^a-zA-Z0-9_]/g, '_');
+      user = {
+        id,
+        username,
+        email: bnUser.email || '',
+        displayName: bnUser.displayName || bnUser.username || username,
+        role: 'user',
+        isBanned: false,
+        createdAt: Date.now(),
+        bytенodeId: bnId,
+      };
+      await saveUsers([...users, user]);
+    }
+
+    // 4) 세션 발급
+    const sv = await getSessionVersion();
+    const refreshId = newRefreshId();
+    const [accessToken] = await Promise.all([
+      signAccess({ userId: user.id, role: user.role, sessionVersion: sv }),
+      storeRefresh(refreshId, { userId: user.id, role: user.role, remember: true,
+        sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_LONG * 1000 }),
+    ]);
+    setAccessCookie(res, accessToken);
+    setRefreshCookie(res, refreshId, true);
+
+    // 5) 원래 목적지로 리다이렉트
+    let dest = '/';
+    try { dest = JSON.parse(Buffer.from(state, 'base64url').toString()).r || '/'; } catch {}
+    res.redirect(dest);
+  } catch (e) {
+    console.error('[bytenode/callback]', e);
+    res.status(500).send('server error');
+  }
+});
+
 // ── 정적 페이지 폴백 ─────────────────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(PUB, 'index.html'));
