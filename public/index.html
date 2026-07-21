@@ -604,7 +604,7 @@
     // bytenode 로그인이 실제로 성공해도 로그인 폼만 계속 떠 있었다.
     (async () => {
       try {
-        const r = await fetch('/api/auth/me', { credentials: 'include' });
+        const r = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
         if (!r.ok) return;
         if (redirectUri) { await afterAuth(); return; }
         const { user } = await r.json();

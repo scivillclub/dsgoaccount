@@ -52,6 +52,14 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '128kb' }));
+
+// 인증 응답은 절대 캐시되면 안 된다 (Vercel 엣지/브라우저 캐시가 로그아웃 이전의
+// 로그인 상태 응답을 그대로 재사용하면 "로그아웃해도 다시 로그인된 것처럼 보이는" 문제가 생긴다)
+app.use('/api/auth', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 app.use(express.static(PUB));
 
 // ── 쿠키 파싱 (의존성 없이) ──────────────────────────────────────────────────
