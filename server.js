@@ -128,6 +128,12 @@ const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
+const reportLimiter = rateLimit({
+  windowMs: 60 * 60_000, max: 5,
+  message: { ok: false, error: 'too_many_reports' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
 // ── JWT 헬퍼 ─────────────────────────────────────────────────────────────────
 const ACCESS_TTL         = 15 * 60;
 const REFRESH_TTL_SHORT  = 24 * 60 * 60;
@@ -697,6 +703,210 @@ app.post('/api/account/bytenode/unlink', requireAuth, requireAccountOrigin, auth
     res.json({ ok: true, profile: publicAccountProfile(updated, true) });
   } catch (e) {
     res.status(e?.message === 'invalid_session' ? 401 : 500).json({ ok: false, error: e?.message || 'server_error' });
+  }
+});
+
+// ── 신고 및 관리자 1:1 메시지 ───────────────────────────────────────────────
+const REPORTS_COL = 'accountReports';
+const MESSAGES_COL = 'accountMessages';
+const ADMIN_ORIGIN = 'https://scivill.vercel.app';
+
+function requireAdminOrigin(req, res, next) {
+  const origin = req.get('origin');
+  const isLocal = process.env.NODE_ENV !== 'production'
+    && origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (origin !== ADMIN_ORIGIN && !isLocal) {
+    return res.status(403).json({ ok: false, error: 'invalid_origin' });
+  }
+  next();
+}
+
+async function requireAdminAccount(req, res, next) {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    if (!['admin', 'coAdmin'].includes(account.user.role)) {
+      return res.status(403).json({ ok: false, error: 'admin_required' });
+    }
+    req.account = account;
+    next();
+  } catch (e) {
+    console.error('[admin/auth]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+}
+
+function reportView(doc) {
+  const data = doc.data();
+  return { id: doc.id, ...data };
+}
+
+function messageView(doc) {
+  const data = doc.data();
+  return { id: doc.id, ...data };
+}
+
+app.post('/api/account/reports', requireAuth, requireAccountOrigin, reportLimiter, async (req, res) => {
+  const targetUsername = String(req.body?.targetUsername || '').trim();
+  const targetDisplayName = String(req.body?.targetDisplayName || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+  if (!targetUsername && !targetDisplayName) {
+    return res.status(400).json({ ok: false, error: 'report_target_required' });
+  }
+  if (targetUsername.length > 40 || targetDisplayName.length > 40) {
+    return res.status(400).json({ ok: false, error: 'report_target_too_long' });
+  }
+  if (reason.length < 10 || reason.length > 2000) {
+    return res.status(400).json({ ok: false, error: 'invalid_report_reason' });
+  }
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const now = Date.now();
+    const ref = db.collection(REPORTS_COL).doc();
+    await ref.set({
+      reporterId: account.user.id,
+      reporterUsername: account.user.username || '',
+      reporterDisplayName: account.user.displayName || account.user.nickname || account.user.name || '',
+      targetUsername,
+      targetDisplayName,
+      reason,
+      status: 'pending',
+      adminNote: '',
+      createdAt: now,
+      updatedAt: now,
+      handledAt: null,
+      handledBy: '',
+    });
+    res.status(201).json({ ok: true, report: { id: ref.id, status: 'pending', createdAt: now } });
+  } catch (e) {
+    console.error('[account/reports:create]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.get('/api/account/inbox', requireAuth, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const snap = await db.collection(MESSAGES_COL).where('recipientId', '==', account.user.id).limit(100).get();
+    const messages = snap.docs.map(messageView).sort((a, b) => b.createdAt - a.createdAt);
+    res.json({ ok: true, messages, unreadCount: messages.filter(m => !m.readAt).length });
+  } catch (e) {
+    console.error('[account/inbox:list]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.patch('/api/account/inbox/:id/read', requireAuth, requireAccountOrigin, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const ref = db.collection(MESSAGES_COL).doc(String(req.params.id));
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists || snap.data()?.recipientId !== account.user.id) throw new Error('not_found');
+      if (!snap.data()?.readAt) tx.update(ref, { readAt: Date.now() });
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    const status = e?.message === 'not_found' ? 404 : 500;
+    res.status(status).json({ ok: false, error: status === 404 ? 'not_found' : 'server_error' });
+  }
+});
+
+app.get('/api/admin/account/users', requireAuth, requireAdminOrigin, requireAdminAccount, async (req, res) => {
+  try {
+    const users = await getUsers();
+    res.json({ ok: true, users: users.filter(u => !u.isBanned).map(u => ({
+      id: u.id,
+      username: u.username || '',
+      displayName: u.displayName || u.nickname || u.name || u.username || '',
+      role: u.role || 'user',
+    })) });
+  } catch (e) {
+    console.error('[admin/account/users]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.get('/api/admin/reports', requireAuth, requireAdminOrigin, requireAdminAccount, async (req, res) => {
+  try {
+    const snap = await db.collection(REPORTS_COL).orderBy('createdAt', 'desc').limit(200).get();
+    res.json({ ok: true, reports: snap.docs.map(reportView) });
+  } catch (e) {
+    console.error('[admin/reports:list]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.patch('/api/admin/reports/:id', requireAuth, requireAdminOrigin, requireAdminAccount, authLimiter, async (req, res) => {
+  const status = String(req.body?.status || '');
+  const adminNote = String(req.body?.adminNote || '').trim();
+  if (!['pending', 'reviewing', 'resolved', 'dismissed'].includes(status)) {
+    return res.status(400).json({ ok: false, error: 'invalid_report_status' });
+  }
+  if (adminNote.length > 1000) return res.status(400).json({ ok: false, error: 'admin_note_too_long' });
+  try {
+    const ref = db.collection(REPORTS_COL).doc(String(req.params.id));
+    const snap = await ref.get();
+    if (!snap.exists) return res.status(404).json({ ok: false, error: 'not_found' });
+    const now = Date.now();
+    const finalStatus = ['resolved', 'dismissed'].includes(status);
+    await ref.update({
+      status,
+      adminNote,
+      updatedAt: now,
+      handledAt: finalStatus ? now : null,
+      handledBy: finalStatus ? req.account.user.id : '',
+    });
+    res.json({ ok: true, report: { id: ref.id, ...snap.data(), status, adminNote, updatedAt: now,
+      handledAt: finalStatus ? now : null, handledBy: finalStatus ? req.account.user.id : '' } });
+  } catch (e) {
+    console.error('[admin/reports:update]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.get('/api/admin/messages', requireAuth, requireAdminOrigin, requireAdminAccount, async (req, res) => {
+  try {
+    const snap = await db.collection(MESSAGES_COL).orderBy('createdAt', 'desc').limit(100).get();
+    res.json({ ok: true, messages: snap.docs.map(messageView) });
+  } catch (e) {
+    console.error('[admin/messages:list]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.post('/api/admin/messages', requireAuth, requireAdminOrigin, requireAdminAccount, authLimiter, async (req, res) => {
+  const recipientId = String(req.body?.recipientId || '').trim();
+  const subject = String(req.body?.subject || '').trim();
+  const body = String(req.body?.body || '').trim();
+  if (!recipientId || subject.length < 1 || subject.length > 80 || body.length < 1 || body.length > 3000) {
+    return res.status(400).json({ ok: false, error: 'invalid_message' });
+  }
+  try {
+    const users = await getUsers();
+    const recipient = users.find(u => u.id === recipientId && !u.isBanned);
+    if (!recipient) return res.status(404).json({ ok: false, error: 'recipient_not_found' });
+    const now = Date.now();
+    const ref = db.collection(MESSAGES_COL).doc();
+    const message = {
+      recipientId: recipient.id,
+      recipientUsername: recipient.username || '',
+      recipientDisplayName: recipient.displayName || recipient.nickname || recipient.name || recipient.username || '',
+      senderId: req.account.user.id,
+      senderDisplayName: req.account.user.displayName || req.account.user.nickname || req.account.user.name || '관리자',
+      subject,
+      body,
+      createdAt: now,
+      readAt: null,
+    };
+    await ref.set(message);
+    res.status(201).json({ ok: true, message: { id: ref.id, ...message } });
+  } catch (e) {
+    console.error('[admin/messages:create]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
 
