@@ -41,6 +41,9 @@ const ALLOWED_ORIGINS = Array.from(new Set([
   ...DEFAULT_ALLOWED_ORIGINS,
   ...(process.env.SSO_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
 ]));
+const ACCOUNT_SETTINGS_ORIGIN = new URL(
+  process.env.ACCOUNT_SETTINGS_ORIGIN || 'https://dsgo.vercel.app'
+).origin;
 
 function isAllowedSSORedirect(redirectUri) {
   try {
@@ -161,8 +164,8 @@ async function verifySSO(token, audience) {
   } catch { return null; }
 }
 
-async function signOAuthState(redirectUri, mode) {
-  return new SignJWT({ redirectUri, mode, oauthState: true })
+async function signOAuthState({ redirectUri = '', mode = 'login', linkUserId = '' }) {
+  return new SignJWT({ redirectUri, mode, linkUserId, oauthState: true })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')
@@ -175,11 +178,30 @@ async function verifyOAuthState(token) {
     if (!payload.oauthState) return null;
     return {
       redirectUri: typeof payload.redirectUri === 'string' ? payload.redirectUri : '',
-      mode: payload.mode === 'register' ? 'register' : 'login',
+      mode: ['register', 'link'].includes(payload.mode) ? payload.mode : 'login',
+      linkUserId: typeof payload.linkUserId === 'string' ? payload.linkUserId : '',
     };
   } catch {
     return null;
   }
+}
+
+function setOAuthStateCookie(res, state) {
+  res.cookie('sv_oauth_state', state, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 10 * 60 * 1000,
+    path: '/api/auth/bytenode/callback',
+  });
+}
+
+function hasMatchingOAuthState(req, state) {
+  const stored = parseCookies(req).sv_oauth_state;
+  if (!stored || !state) return false;
+  const left = Buffer.from(stored);
+  const right = Buffer.from(String(state));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
 // ── Refresh Token (Firestore) ─────────────────────────────────────────────────
@@ -272,7 +294,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const id = uuid();
     const pw = await hashPw(password, id);
     const user = {
-      id, username, email: email || '', displayName,
+      id, username, email: email || '', displayName, nickname: displayName, name: displayName,
       role: 'user', isBanned: false, createdAt: Date.now(),
     };
     const creds = await getCreds();
@@ -285,8 +307,8 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
     const [accessToken] = await Promise.all([
-      signAccess({ userId: id, role: 'user', sessionVersion: sv }),
-      storeRefresh(refreshId, { userId: id, role: 'user', remember: false,
+      signAccess({ userId: id, role: 'user', sessionVersion: sv, authVersion: 0 }),
+      storeRefresh(refreshId, { userId: id, role: 'user', remember: false, authVersion: 0,
         sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_SHORT * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
@@ -319,9 +341,9 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const refreshId = newRefreshId();
     const ttl = remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
     const [accessToken] = await Promise.all([
-      signAccess({ userId: user.id, role: user.role, sessionVersion: sv }),
+      signAccess({ userId: user.id, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
       storeRefresh(refreshId, { userId: user.id, role: user.role,
-        remember: !!remember, sessionVersion: sv, expiresAt: Date.now() + ttl * 1000 }),
+        remember: !!remember, sessionVersion: sv, authVersion: user.authVersion || 0, expiresAt: Date.now() + ttl * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshId, !!remember);
@@ -353,6 +375,9 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     if (user.isBanned) return res.status(403).json({ ok: false, error: 'banned' });
     if (req.session.sessionVersion !== sessionVersion) {
       return res.status(401).json({ ok: false, error: 'session_invalidated' });
+    }
+    if ((req.session.authVersion || 0) !== (user.authVersion || 0)) {
+      return res.status(401).json({ ok: false, error: 'account_session_invalidated' });
     }
     const { id, username, displayName, role, email } = user;
     res.json({ ok: true, user: { id, username, displayName, role, email } });
@@ -387,13 +412,20 @@ app.post('/api/auth/refresh', async (req, res) => {
       res.clearCookie('sv_refresh', { path: '/' });
       return res.status(401).json({ ok: false, error: user ? 'banned' : 'not_found' });
     }
+    if ((stored.authVersion || 0) !== (user.authVersion || 0)) {
+      await deleteRefresh(refreshId).catch(() => {});
+      res.clearCookie('sv_access',  { path: '/' });
+      res.clearCookie('sv_refresh', { path: '/' });
+      return res.status(401).json({ ok: false, error: 'account_session_invalidated' });
+    }
 
     const newId = newRefreshId();
     const ttl = stored.remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
     const [accessToken] = await Promise.all([
-      signAccess({ userId: stored.userId, role: user.role, sessionVersion: sv }),
+      signAccess({ userId: stored.userId, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
       deleteRefresh(refreshId),
-      storeRefresh(newId, { ...stored, role: user.role, sessionVersion: sv, expiresAt: Date.now() + ttl * 1000 }),
+      storeRefresh(newId, { ...stored, role: user.role, sessionVersion: sv,
+        authVersion: user.authVersion || 0, expiresAt: Date.now() + ttl * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, newId, stored.remember);
@@ -419,6 +451,9 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
     if (user.isBanned) return res.status(403).json({ ok: false, error: 'banned' });
     if (req.session.sessionVersion !== sessionVersion) {
       return res.status(401).json({ ok: false, error: 'session_invalidated' });
+    }
+    if ((req.session.authVersion || 0) !== (user.authVersion || 0)) {
+      return res.status(401).json({ ok: false, error: 'account_session_invalidated' });
     }
 
     const url = new URL(redirectUri);
@@ -477,6 +512,203 @@ async function handleSSOVerify(req, res) {
 app.post('/api/auth/sso/verify', handleSSOVerify);
 app.get('/api/auth/sso/verify', handleSSOVerify); // 이전 배포와의 호환
 
+// ── 통합 계정 설정 API ───────────────────────────────────────────────────────
+function requireAccountOrigin(req, res, next) {
+  const origin = req.get('origin');
+  const isLocal = process.env.NODE_ENV !== 'production'
+    && origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (origin !== ACCOUNT_SETTINGS_ORIGIN && !isLocal) {
+    return res.status(403).json({ ok: false, error: 'invalid_origin' });
+  }
+  next();
+}
+
+async function loadCurrentAccount(req) {
+  const [users, creds, sessionVersion] = await Promise.all([
+    getUsers(), getCreds(), getSessionVersion(),
+  ]);
+  const user = users.find(u => u.id === req.session.userId);
+  if (!user || user.isBanned || req.session.sessionVersion !== sessionVersion
+    || (req.session.authVersion || 0) !== (user.authVersion || 0)) return null;
+  return { user, hasPassword: typeof creds[user.id] === 'string' && !!creds[user.id] };
+}
+
+function publicAccountProfile(user, hasPassword) {
+  return {
+    id: user.id,
+    username: user.username || '',
+    displayName: user.displayName || user.nickname || user.name || user.username || '',
+    email: user.email || '',
+    role: user.role || 'user',
+    hasPassword,
+    hasBytenode: !!user.bytenodeId,
+    needsLocalCredentials: !!user.bytenodeId && !hasPassword,
+  };
+}
+
+app.get('/api/account/profile', requireAuth, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    res.json({ ok: true, profile: publicAccountProfile(account.user, account.hasPassword) });
+  } catch (e) {
+    console.error('[account/profile:get]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.patch('/api/account/profile', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  const displayName = String(req.body?.displayName || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (displayName.length < 1 || displayName.length > 40) {
+    return res.status(400).json({ ok: false, error: 'invalid_display_name' });
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ ok: false, error: 'invalid_email' });
+  }
+  try {
+    let updated;
+    await db.runTransaction(async tx => {
+      const ref = db.collection(SHARED_COL).doc('users');
+      const snap = await tx.get(ref);
+      const users = snap.exists ? (snap.data()?.value ?? []) : [];
+      const index = users.findIndex(u => u.id === req.session.userId);
+      if (index < 0 || users[index].isBanned) throw new Error('invalid_session');
+      if (email && users.some((u, i) => i !== index && String(u.email || '').toLowerCase() === email)) {
+        throw new Error('email_taken');
+      }
+      updated = { ...users[index], displayName, nickname: displayName, email };
+      users[index] = updated;
+      tx.set(ref, { value: users });
+    });
+    const creds = await getCreds();
+    res.json({ ok: true, profile: publicAccountProfile(updated, !!creds[updated.id]) });
+  } catch (e) {
+    const error = e?.message === 'email_taken' ? 'email_taken'
+      : e?.message === 'invalid_session' ? 'invalid_session' : 'server_error';
+    res.status(error === 'server_error' ? 500 : error === 'email_taken' ? 409 : 401).json({ ok: false, error });
+  }
+});
+
+app.post('/api/account/local-credentials', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const currentPassword = String(req.body?.currentPassword || '');
+  const newPassword = String(req.body?.newPassword || '');
+  if (newPassword.length < 8 || newPassword.length > 128 || !/[A-Za-z]/.test(newPassword) || !/\d/.test(newPassword)) {
+    return res.status(400).json({ ok: false, error: 'weak_password' });
+  }
+
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    if (!account.hasPassword && !/^[a-zA-Z0-9_]{3,20}$/.test(username)) {
+      return res.status(400).json({ ok: false, error: 'invalid_username' });
+    }
+    const credsBefore = await getCreds();
+    if (account.hasPassword) {
+      const currentHash = await hashPw(currentPassword, account.user.id);
+      const stored = String(credsBefore[account.user.id] || '');
+      const left = Buffer.from(currentHash);
+      const right = Buffer.from(stored);
+      if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+        return res.status(403).json({ ok: false, error: 'invalid_current_password' });
+      }
+    }
+
+    const newHash = await hashPw(newPassword, account.user.id);
+    let updatedUser;
+    await db.runTransaction(async tx => {
+      const usersRef = db.collection(SHARED_COL).doc('users');
+      const credsRef = db.collection(SHARED_COL).doc('creds');
+      const [usersSnap, credsSnap] = await Promise.all([tx.get(usersRef), tx.get(credsRef)]);
+      const users = usersSnap.exists ? (usersSnap.data()?.value ?? []) : [];
+      const creds = credsSnap.exists ? (credsSnap.data()?.value ?? {}) : {};
+      const index = users.findIndex(u => u.id === req.session.userId);
+      if (index < 0 || users[index].isBanned) throw new Error('invalid_session');
+      if (!creds[req.session.userId]) {
+        const normalized = username.toLowerCase();
+        if (users.some((u, i) => i !== index && String(u.username || '').toLowerCase() === normalized)) {
+          throw new Error('username_taken');
+        }
+        users[index] = { ...users[index], username };
+      }
+      users[index] = { ...users[index], authVersion: (users[index].authVersion || 0) + 1 };
+      creds[req.session.userId] = newHash;
+      updatedUser = users[index];
+      tx.set(usersRef, { value: users });
+      tx.set(credsRef, { value: creds });
+    });
+
+    // Password changes invalidate other central refresh sessions but keep this browser signed in.
+    const currentRefresh = parseCookies(req).sv_refresh;
+    const refreshSnap = await db.collection('refreshTokens').where('userId', '==', req.session.userId).get();
+    const sessionVersion = await getSessionVersion();
+    const freshAccess = await signAccess({
+      userId: updatedUser.id,
+      role: updatedUser.role,
+      sessionVersion,
+      authVersion: updatedUser.authVersion,
+    });
+    await Promise.all(refreshSnap.docs.map(doc => {
+      if (doc.id === currentRefresh) {
+        return doc.ref.update({ authVersion: updatedUser.authVersion, role: updatedUser.role, sessionVersion });
+      }
+      return doc.ref.delete();
+    }));
+    setAccessCookie(res, freshAccess);
+    res.json({ ok: true, profile: publicAccountProfile(updatedUser, true) });
+  } catch (e) {
+    const error = ['username_taken', 'invalid_session'].includes(e?.message) ? e.message : 'server_error';
+    res.status(error === 'server_error' ? 500 : error === 'username_taken' ? 409 : 401).json({ ok: false, error });
+  }
+});
+
+app.post('/api/account/bytenode/unlink', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    if (!account.hasPassword) return res.status(409).json({ ok: false, error: 'local_credentials_required' });
+    let updated;
+    await db.runTransaction(async tx => {
+      const ref = db.collection(SHARED_COL).doc('users');
+      const snap = await tx.get(ref);
+      const users = snap.exists ? (snap.data()?.value ?? []) : [];
+      const index = users.findIndex(u => u.id === req.session.userId);
+      if (index < 0) throw new Error('invalid_session');
+      updated = { ...users[index] };
+      delete updated.bytenodeId;
+      users[index] = updated;
+      tx.set(ref, { value: users });
+    });
+    res.json({ ok: true, profile: publicAccountProfile(updated, true) });
+  } catch (e) {
+    res.status(e?.message === 'invalid_session' ? 401 : 500).json({ ok: false, error: e?.message || 'server_error' });
+  }
+});
+
+app.get('/api/account/bytenode/link', requireAuth, async (req, res) => {
+  if (!BYTENODE_CLIENT_ID || !BYTENODE_CLIENT_SECRET) {
+    return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?bytenode=config_error`);
+  }
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/api/auth/login?return_to=%2Fsettings`);
+    const state = await signOAuthState({ mode: 'link', linkUserId: account.user.id });
+    setOAuthStateCookie(res, state);
+    const redirectUri = bytenodeCallbackUrl();
+    const url = new URL(BYTENODE_AUTH_URL);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', BYTENODE_CLIENT_ID);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('state', state);
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.redirect(url.toString());
+  } catch (e) {
+    console.error('[account/bytenode/link]', e);
+    res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?bytenode=error`);
+  }
+});
+
 // ── Bytenode OAuth ────────────────────────────────────────────────────────────
 const BYTENODE_CLIENT_ID     = process.env.BYTENODE_CLIENT_ID;
 const BYTENODE_CLIENT_SECRET = process.env.BYTENODE_CLIENT_SECRET;
@@ -493,7 +725,8 @@ app.get('/api/auth/bytenode', async (req, res) => {
   const mode = req.query.mode === 'register' ? 'register' : 'login';
   const requestedRedirect = String(req.query.redirect_uri || '');
   const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
-  const state = await signOAuthState(originalRedirectUri, mode);
+  const state = await signOAuthState({ redirectUri: originalRedirectUri, mode });
+  setOAuthStateCookie(res, state);
   const url = `${BYTENODE_AUTH_URL}?response_type=code&client_id=${BYTENODE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
   res.redirect(url);
 });
@@ -507,10 +740,14 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
 
   // 서명된 state에서 원래 redirect_uri + 로그인/가입 의도(mode) 복원
   const oauthState = await verifyOAuthState(state);
-  if (!oauthState) return res.redirect('/?bn_error=invalid_state');
-  const { redirectUri: originalRedirectUri, mode } = oauthState;
+  if (!oauthState || !hasMatchingOAuthState(req, state)) return res.redirect('/?bn_error=invalid_state');
+  res.clearCookie('sv_oauth_state', { path: '/api/auth/bytenode/callback' });
+  const { redirectUri: originalRedirectUri, mode, linkUserId } = oauthState;
 
   function backToLogin(bnError) {
+    if (mode === 'link') {
+      return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?bytenode=${encodeURIComponent(bnError)}`);
+    }
     const qs = new URLSearchParams({ bn_error: bnError });
     if (originalRedirectUri && originalRedirectUri !== '/') qs.set('redirect_uri', originalRedirectUri);
     return res.redirect('/?' + qs.toString());
@@ -545,7 +782,19 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     const users = await getUsers();
     let user = users.find(u => u.bytenodeId === bnId);
 
-    if (mode === 'login') {
+    if (mode === 'link') {
+      if (!linkUserId) return backToLogin('invalid_state');
+      if (user && user.id !== linkUserId) return backToLogin('already_linked');
+      const linkIndex = users.findIndex(u => u.id === linkUserId);
+      if (linkIndex < 0 || users[linkIndex].isBanned) return backToLogin('invalid_session');
+      user = {
+        ...users[linkIndex],
+        bytenodeId: bnId,
+        email: users[linkIndex].email || bnUser.email || '',
+      };
+      users[linkIndex] = user;
+      await saveUsers(users);
+    } else if (mode === 'login') {
       // 로그인 의도인데 연결된 계정이 없으면 새로 만들지 않고 에러로 돌려보낸다
       if (!user) return backToLogin('not_registered');
     } else {
@@ -553,11 +802,14 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       if (!user) {
         const id = uuid();
         const username = `bn_${bnId}`.slice(0, 20).replace(/[^a-zA-Z0-9_]/g, '_');
+        const displayName = bnUser.displayName || bnUser.username || username;
         user = {
           id,
           username,
           email: bnUser.email || '',
-          displayName: bnUser.displayName || bnUser.username || username,
+          displayName,
+          nickname: displayName,
+          name: displayName,
           role: 'user',
           isBanned: false,
           createdAt: Date.now(),
@@ -573,14 +825,17 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
     const [svAccessToken] = await Promise.all([
-      signAccess({ userId: user.id, role: user.role, sessionVersion: sv }),
+      signAccess({ userId: user.id, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
       storeRefresh(refreshId, { userId: user.id, role: user.role, remember: true,
-        sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_LONG * 1000 }),
+        sessionVersion: sv, authVersion: user.authVersion || 0, expiresAt: Date.now() + REFRESH_TTL_LONG * 1000 }),
     ]);
     setAccessCookie(res, svAccessToken);
     setRefreshCookie(res, refreshId, true);
 
     // 5) 원래 redirect_uri로 복귀
+    if (mode === 'link') {
+      return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?bytenode=linked`);
+    }
     if (originalRedirectUri) {
       // SSO 콜백 URL이면 토큰 직접 발급
       const url = new URL(originalRedirectUri);
