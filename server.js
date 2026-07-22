@@ -222,13 +222,18 @@ async function deleteRefresh(id) {
 function setAccessCookie(res, token) {
   res.cookie('sv_access', token, {
     httpOnly: true, secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax', maxAge: ACCESS_TTL * 1000, path: '/',
+    // Account settings and profile badges are consumed by the other Scivill
+    // Vercel origins. Production therefore needs an explicitly cross-site
+    // cookie; localhost development remains lax because Secure is unavailable.
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: ACCESS_TTL * 1000, path: '/',
   });
 }
 function setRefreshCookie(res, id, remember) {
   res.cookie('sv_refresh', id, {
     httpOnly: true, secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax', maxAge: (remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT) * 1000, path: '/',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: (remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT) * 1000, path: '/',
   });
 }
 
@@ -360,7 +365,12 @@ app.post('/api/auth/logout', async (req, res) => {
   const cookies = parseCookies(req);
   const refreshId = cookies['sv_refresh'];
   if (refreshId) await deleteRefresh(refreshId).catch(() => {});
-  const cookieOpts = { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/' };
+  const cookieOpts = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    path: '/',
+  };
   res.clearCookie('sv_access',  cookieOpts);
   res.clearCookie('sv_refresh', cookieOpts);
   res.json({ ok: true });
