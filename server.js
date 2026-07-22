@@ -29,6 +29,10 @@ const SESSION_SECRET = new TextEncoder().encode(
 const SSO_SECRET = new TextEncoder().encode(process.env.SESSION_SECRET);
 
 const DEFAULT_ALLOWED_ORIGINS = [
+  // The hosted login/register page posts JSON back to this same Express app.
+  // Browsers include an Origin header for those requests, so the account
+  // origin must be present as well as the consuming service origins.
+  'https://dsgoaccount.vercel.app',
   'https://dsgo.vercel.app',
   'https://scivill.vercel.app',
   'https://scivill-deepthink.vercel.app',
