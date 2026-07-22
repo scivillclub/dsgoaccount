@@ -457,7 +457,7 @@
             </label>
             <label class="agreement-card">
               <input type="checkbox" id="r-privacy" />
-              <span><b>개인정보 처리방침 동의</b> <span style="color:var(--fp-muted)">(필수)</span><br /><a href="https://scivill.vercel.app/privacy" target="_blank" rel="noopener noreferrer">개인정보 처리방침 전문 보기</a></span>
+              <span><b>개인정보 수집·이용 동의</b> <span style="color:var(--fp-muted)">(필수)</span><br /><a href="https://scivill.vercel.app/privacy-consent" target="_blank" rel="noopener noreferrer">동의 내용 보기</a> · <a href="https://scivill.vercel.app/privacy" target="_blank" rel="noopener noreferrer">처리방침 보기</a></span>
             </label>
             <div class="reg-actions"><button type="button" class="submit" onclick="nextRegisterStep()">동의하고 계속 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
@@ -484,6 +484,10 @@
             <p class="reg-desc">선택 사항입니다. 입력한다면 실제 메일로 받은 6자리 코드를 인증해야 합니다.</p>
             <div class="fg">
               <label class="fl" for="r-em">이메일 <span class="hint">선택</span></label>
+              <label class="agreement-card" style="margin-bottom:12px">
+                <input type="checkbox" id="r-email-consent" />
+                <span><b>이메일 개인정보 수집·이용 동의</b> <span style="color:var(--fp-muted)">(선택)</span><br /><a href="https://scivill.vercel.app/privacy-consent" target="_blank" rel="noopener noreferrer">수집 목적·항목·보유기간 보기</a></span>
+              </label>
               <div class="email-row"><input type="email" id="r-em" placeholder="example@email.com" autocomplete="email" /><button type="button" class="submit secondary" id="reg-email-send">인증코드 받기</button></div>
               <div class="otp-wrap" id="reg-otp-wrap"><div class="email-row"><input type="text" class="otp-input" id="r-email-code" placeholder="000000" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><button type="button" class="submit" id="reg-email-verify">인증하기</button></div></div>
               <div class="email-status" id="reg-email-status">이메일 없이도 모든 서비스를 이용할 수 있습니다.</div>
@@ -623,7 +627,7 @@
       invalid_username:    '아이디는 영문·숫자·_로 3~20자여야 합니다.',
       invalid_password:    '비밀번호는 6자 이상이어야 합니다.',
       invalid_display_name:'표시 이름은 1~40자로 입력해주세요.',
-      agreements_required: '이용약관과 개인정보 처리방침에 동의해주세요.',
+      agreements_required: '이용약관과 필수 개인정보 수집·이용에 동의해주세요.',
       invalid_email:       '올바른 이메일 주소를 입력해주세요.',
       email_taken:         '이미 다른 계정에서 사용 중인 이메일입니다.',
       email_verification_required: '이메일 인증을 완료해주세요.',
@@ -793,6 +797,9 @@
     document.getElementById('reg-email-send').addEventListener('click', async () => {
       const email = document.getElementById('r-em').value.trim().toLowerCase();
       const button = document.getElementById('reg-email-send');
+      if (!document.getElementById('r-email-consent').checked) {
+        setRegistrationEmailStatus('선택 이메일 개인정보 수집·이용에 동의하거나 건너뛰기를 선택해주세요.', 'err'); return;
+      }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         setRegistrationEmailStatus(ERR.invalid_email, 'err'); return;
       }
@@ -858,6 +865,7 @@
     document.getElementById('reg-email-skip').addEventListener('click', () => {
       document.getElementById('r-em').value = '';
       document.getElementById('r-email-code').value = '';
+      document.getElementById('r-email-consent').checked = false;
       document.getElementById('r-em').disabled = false;
       document.getElementById('reg-otp-wrap').classList.remove('on');
       registrationEmailVerified = false;
@@ -865,7 +873,7 @@
       setRegisterStep(5);
     });
     document.getElementById('reg-email-next').addEventListener('click', () => {
-      if (registrationEmailVerified) setRegisterStep(5);
+      if (registrationEmailVerified && document.getElementById('r-email-consent').checked) setRegisterStep(5);
     });
 
     async function handleRegister(e) {
@@ -967,6 +975,11 @@
         style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"
         onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.28)'">
         개인정보처리방침
+      </a>
+      <a href="https://scivill.vercel.app/privacy-consent" target="_blank" rel="noopener noreferrer"
+        style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"
+        onmouseover="this.style.color='rgba(255,255,255,0.7)'" onmouseout="this.style.color='rgba(255,255,255,0.28)'">
+        수집·이용 동의
       </a>
       <a href="https://scivill.vercel.app/licenses" target="_blank" rel="noopener noreferrer"
         style="font-size: 11px; color: rgba(255,255,255,0.28); text-decoration: none; transition: color 0.15s;"

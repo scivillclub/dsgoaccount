@@ -440,7 +440,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
       role: 'pending', isBanned: false, createdAt: Date.now(),
       termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(),
       termsVersion: '2026-07-22', privacyVersion: '2026-07-22',
-      ...(email ? { emailVerifiedAt: Date.now() } : {}),
+      ...(email ? { emailVerifiedAt: Date.now(), emailConsentAt: Date.now() } : {}),
     };
     const creds = await getCreds();
     creds[id] = pw;
@@ -996,7 +996,7 @@ app.post('/api/account/email/verify', requireAccountAuth, requireAccountOrigin, 
       if (users.some((u, i) => i !== index && String(u.email || '').toLowerCase() === email)) {
         throw new Error('email_taken');
       }
-      updatedUser = { ...users[index], email, emailVerifiedAt: Date.now() };
+      updatedUser = { ...users[index], email, emailVerifiedAt: Date.now(), emailConsentAt: Date.now() };
       users[index] = updatedUser;
       tx.set(usersRef, { value: users });
       tx.delete(codeRef);
