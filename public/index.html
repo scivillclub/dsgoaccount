@@ -510,6 +510,8 @@
       not_registered: '가입된 계정이 아닙니다. 먼저 bytenode 계정으로 회원가입해주세요.',
       already_registered: '이미 가입된 계정입니다. bytenode 계정으로 로그인해주세요.',
       bytenode_error: 'bytenode 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
+      bytenode_config: 'bytenode 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해주세요.',
+      invalid_state: '로그인 요청이 만료되었거나 유효하지 않습니다. 다시 시도해주세요.',
     };
     (() => {
       const bnErr = params.get('bn_error');
@@ -529,11 +531,24 @@
     }
 
     // ── SSO 리다이렉트 ────────────────────────────────────────────────────────
+    async function authFetch(url, options = {}) {
+      let response = await fetch(url, { ...options, credentials: 'include', cache: 'no-store' });
+      if (response.status !== 401) return response;
+
+      const refreshed = await fetch('/api/auth/refresh', {
+        method: 'POST', credentials: 'include', cache: 'no-store'
+      });
+      if (!refreshed.ok) return response;
+      return fetch(url, { ...options, credentials: 'include', cache: 'no-store' });
+    }
+
     async function afterAuth() {
       if (redirectUri) {
-        const r = await fetch('/api/auth/sso/issue?redirect_uri=' + encodeURIComponent(redirectUri), { credentials: 'include' });
+        const r = await authFetch('/api/auth/sso/issue?redirect_uri=' + encodeURIComponent(redirectUri));
         const d = await r.json();
         if (d.ok) { location.href = d.redirectUrl; return; }
+        showMsg('login-msg', ERR[d.error] || '서비스 로그인 연결에 실패했습니다.', 'err');
+        return;
       }
       showMsg('login-msg', '로그인되었습니다.', 'ok');
     }
@@ -604,7 +619,7 @@
     // bytenode 로그인이 실제로 성공해도 로그인 폼만 계속 떠 있었다.
     (async () => {
       try {
-        const r = await fetch('/api/auth/me', { credentials: 'include', cache: 'no-store' });
+        const r = await authFetch('/api/auth/me');
         if (!r.ok) return;
         if (redirectUri) { await afterAuth(); return; }
         const { user } = await r.json();

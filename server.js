@@ -28,8 +28,31 @@ const SESSION_SECRET = new TextEncoder().encode(
 );
 const SSO_SECRET = new TextEncoder().encode(process.env.SESSION_SECRET);
 
-const ALLOWED_ORIGINS = (process.env.SSO_ALLOWED_ORIGINS || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://dsgo.vercel.app',
+  'https://scivill.vercel.app',
+  'https://scivill-deepthink.vercel.app',
+  'https://scivill-nodetask.vercel.app',
+  'https://scivill-sheet.vercel.app',
+  'https://scivill-oryaform.vercel.app',
+  'https://scivill-qrlink.vercel.app',
+];
+const ALLOWED_ORIGINS = Array.from(new Set([
+  ...DEFAULT_ALLOWED_ORIGINS,
+  ...(process.env.SSO_ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+]));
+
+function isAllowedSSORedirect(redirectUri) {
+  try {
+    const url = new URL(String(redirectUri || ''));
+    const isLocal = process.env.NODE_ENV !== 'production'
+      && /^(localhost|127\.0\.0\.1)$/.test(url.hostname);
+    return (ALLOWED_ORIGINS.includes(url.origin) || isLocal)
+      && url.pathname === '/api/auth/sso';
+  } catch {
+    return false;
+  }
+}
 
 // ── 미들웨어 ─────────────────────────────────────────────────────────────────
 app.use(helmet({
@@ -65,7 +88,23 @@ app.use(express.static(PUB));
 // ── 쿠키 파싱 (의존성 없이) ──────────────────────────────────────────────────
 function parseCookies(req) {
   const raw = req.headers.cookie || '';
-  return Object.fromEntries(raw.split(';').map(c => c.trim().split('=').map(decodeURIComponent)));
+  const cookies = {};
+  for (const part of raw.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 1) continue;
+    try {
+      const name = decodeURIComponent(part.slice(0, separator).trim());
+      const value = decodeURIComponent(part.slice(separator + 1).trim());
+      cookies[name] = value;
+    } catch {
+      // Ignore malformed cookie pairs instead of failing the whole auth request.
+    }
+  }
+  return cookies;
+}
+
+function bytenodeCallbackUrl() {
+  return new URL('/api/auth/bytenode/callback', process.env.BASE_URL || 'https://dsgoaccount.vercel.app').toString();
 }
 
 // ── Rate Limiter ──────────────────────────────────────────────────────────────
@@ -102,20 +141,45 @@ async function verifyAccess(token) {
   } catch { return null; }
 }
 
-async function signSSO(userId, role) {
+async function signSSO(userId, role, audience) {
   return new SignJWT({ userId, role, sso: true })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
+    .setAudience(audience)
     .setExpirationTime('60s')
     .sign(SSO_SECRET);
 }
 
-async function verifySSO(token) {
+async function verifySSO(token, audience) {
   try {
-    const { payload } = await jwtVerify(token, SSO_SECRET);
-    if (!payload.sso) return null;
+    const { payload } = await jwtVerify(token, SSO_SECRET, {
+      algorithms: ['HS256'],
+      audience,
+    });
+    if (!payload.sso || typeof payload.userId !== 'string' || !payload.userId) return null;
     return payload;
   } catch { return null; }
+}
+
+async function signOAuthState(redirectUri, mode) {
+  return new SignJWT({ redirectUri, mode, oauthState: true })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('10m')
+    .sign(SSO_SECRET);
+}
+
+async function verifyOAuthState(token) {
+  try {
+    const { payload } = await jwtVerify(String(token || ''), SSO_SECRET, { algorithms: ['HS256'] });
+    if (!payload.oauthState) return null;
+    return {
+      redirectUri: typeof payload.redirectUri === 'string' ? payload.redirectUri : '',
+      mode: payload.mode === 'register' ? 'register' : 'login',
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ── Refresh Token (Firestore) ─────────────────────────────────────────────────
@@ -283,9 +347,13 @@ app.post('/api/auth/logout', async (req, res) => {
 // GET /api/auth/me
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
-    const users = await getUsers();
+    const [users, sessionVersion] = await Promise.all([getUsers(), getSessionVersion()]);
     const user = users.find(u => u.id === req.session.userId);
     if (!user) return res.status(404).json({ ok: false, error: 'not_found' });
+    if (user.isBanned) return res.status(403).json({ ok: false, error: 'banned' });
+    if (req.session.sessionVersion !== sessionVersion) {
+      return res.status(401).json({ ok: false, error: 'session_invalidated' });
+    }
     const { id, username, displayName, role, email } = user;
     res.json({ ok: true, user: { id, username, displayName, role, email } });
   } catch (e) {
@@ -304,7 +372,7 @@ app.post('/api/auth/refresh', async (req, res) => {
     return res.status(401).json({ ok: false, error: 'refresh_expired' });
 
   try {
-    const sv = await getSessionVersion();
+    const [sv, users] = await Promise.all([getSessionVersion(), getUsers()]);
     if (stored.sessionVersion !== sv) {
       await deleteRefresh(refreshId).catch(() => {});
       res.clearCookie('sv_access',  { path: '/' });
@@ -312,12 +380,20 @@ app.post('/api/auth/refresh', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'session_invalidated' });
     }
 
+    const user = users.find(u => u.id === stored.userId);
+    if (!user || user.isBanned) {
+      await deleteRefresh(refreshId).catch(() => {});
+      res.clearCookie('sv_access',  { path: '/' });
+      res.clearCookie('sv_refresh', { path: '/' });
+      return res.status(401).json({ ok: false, error: user ? 'banned' : 'not_found' });
+    }
+
     const newId = newRefreshId();
     const ttl = stored.remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
     const [accessToken] = await Promise.all([
-      signAccess({ userId: stored.userId, role: stored.role, sessionVersion: sv }),
+      signAccess({ userId: stored.userId, role: user.role, sessionVersion: sv }),
       deleteRefresh(refreshId),
-      storeRefresh(newId, { ...stored, sessionVersion: sv, expiresAt: Date.now() + ttl * 1000 }),
+      storeRefresh(newId, { ...stored, role: user.role, sessionVersion: sv, expiresAt: Date.now() + ttl * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, newId, stored.remember);
@@ -334,13 +410,19 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
   if (!redirectUri) return res.status(400).json({ ok: false, error: 'missing_redirect_uri' });
 
   try {
-    const url = new URL(redirectUri);
-    const allowed = ALLOWED_ORIGINS.includes(url.origin)
-      && url.pathname.startsWith('/api/auth/sso');
-    if (!allowed && process.env.NODE_ENV === 'production')
+    if (!isAllowedSSORedirect(redirectUri))
       return res.status(400).json({ ok: false, error: 'invalid_redirect_uri' });
 
-    const token = await signSSO(req.session.userId, req.session.role);
+    const [users, sessionVersion] = await Promise.all([getUsers(), getSessionVersion()]);
+    const user = users.find(u => u.id === req.session.userId);
+    if (!user) return res.status(401).json({ ok: false, error: 'not_found' });
+    if (user.isBanned) return res.status(403).json({ ok: false, error: 'banned' });
+    if (req.session.sessionVersion !== sessionVersion) {
+      return res.status(401).json({ ok: false, error: 'session_invalidated' });
+    }
+
+    const url = new URL(redirectUri);
+    const token = await signSSO(user.id, user.role, url.origin);
     url.searchParams.set('token', token);
     res.json({ ok: true, redirectUrl: url.toString() });
   } catch (e) {
@@ -349,14 +431,51 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/auth/sso/verify (SP가 토큰 검증용으로 직접 호출)
-app.get('/api/auth/sso/verify', async (req, res) => {
-  const token = req.query.token;
-  if (!token) return res.status(400).json({ ok: false });
-  const payload = await verifySSO(token);
+// SP가 서버 간 호출로 SSO 토큰을 검증한다. POST를 기본으로 두어 토큰이 URL 로그에 남지 않게 한다.
+async function handleSSOVerify(req, res) {
+  const token = req.body?.token || req.query.token;
+  const requestedAudience = req.body?.audience || req.query.audience;
+  if (!token || !requestedAudience) {
+    return res.status(400).json({ ok: false, error: 'missing_token_or_audience' });
+  }
+
+  let audience;
+  try {
+    const parsed = new URL(String(requestedAudience));
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('invalid protocol');
+    audience = parsed.origin;
+  } catch {
+    return res.status(400).json({ ok: false, error: 'invalid_audience' });
+  }
+
+  const payload = await verifySSO(token, audience);
   if (!payload) return res.status(401).json({ ok: false, error: 'invalid_token' });
-  res.json({ ok: true, userId: payload.userId, role: payload.role });
-});
+
+  try {
+    const users = await getUsers();
+    const user = users.find(u => u.id === payload.userId);
+    if (!user) return res.status(401).json({ ok: false, error: 'user_not_found' });
+    if (user.isBanned) return res.status(403).json({ ok: false, error: 'user_banned' });
+
+    res.json({
+      ok: true,
+      userId: user.id,
+      role: user.role || 'user',
+      user: {
+        id: user.id,
+        username: user.username || '',
+        email: user.email || '',
+        displayName: user.displayName || user.nickname || user.name || user.username || '',
+        role: user.role || 'user',
+      },
+    });
+  } catch (e) {
+    console.error('[sso/verify]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+}
+app.post('/api/auth/sso/verify', handleSSOVerify);
+app.get('/api/auth/sso/verify', handleSSOVerify); // 이전 배포와의 호환
 
 // ── Bytenode OAuth ────────────────────────────────────────────────────────────
 const BYTENODE_CLIENT_ID     = process.env.BYTENODE_CLIENT_ID;
@@ -366,10 +485,15 @@ const BYTENODE_TOKEN_URL     = 'https://bytenode-account.vercel.app/token';
 const BYTENODE_USERINFO_URL  = 'https://bytenode-account.vercel.app/userinfo';
 
 // GET /api/auth/bytenode — bytenode authorize로 리다이렉트
-app.get('/api/auth/bytenode', (req, res) => {
-  const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
+app.get('/api/auth/bytenode', async (req, res) => {
+  if (!BYTENODE_CLIENT_ID || !BYTENODE_CLIENT_SECRET) {
+    return res.redirect('/?bn_error=bytenode_config');
+  }
+  const redirect_uri = bytenodeCallbackUrl();
   const mode = req.query.mode === 'register' ? 'register' : 'login';
-  const state = Buffer.from(JSON.stringify({ r: req.query.redirect_uri || '/', mode })).toString('base64url');
+  const requestedRedirect = String(req.query.redirect_uri || '');
+  const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
+  const state = await signOAuthState(originalRedirectUri, mode);
   const url = `${BYTENODE_AUTH_URL}?response_type=code&client_id=${BYTENODE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
   res.redirect(url);
 });
@@ -379,16 +503,12 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
   const { code, state } = req.query;
   if (!code) return res.status(400).send('missing code');
 
-  const redirect_uri = `${process.env.BASE_URL || 'https://dsgoaccount.vercel.app'}/api/auth/bytenode/callback`;
+  const redirect_uri = bytenodeCallbackUrl();
 
-  // state에서 원래 redirect_uri + 로그인/가입 의도(mode) 복원
-  let originalRedirectUri = '';
-  let mode = 'login';
-  try {
-    const parsed = JSON.parse(Buffer.from(state, 'base64url').toString());
-    originalRedirectUri = parsed.r || '';
-    mode = parsed.mode === 'register' ? 'register' : 'login';
-  } catch {}
+  // 서명된 state에서 원래 redirect_uri + 로그인/가입 의도(mode) 복원
+  const oauthState = await verifyOAuthState(state);
+  if (!oauthState) return res.redirect('/?bn_error=invalid_state');
+  const { redirectUri: originalRedirectUri, mode } = oauthState;
 
   function backToLogin(bnError) {
     const qs = new URLSearchParams({ bn_error: bnError });
@@ -405,7 +525,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     });
     const tokenData = await tokenRes.json().catch(() => null);
     const accessToken = tokenData && (tokenData.access_token || tokenData.token);
-    if (!accessToken) {
+    if (!tokenRes.ok || !accessToken) {
       console.error('[bytenode/callback] token response:', JSON.stringify(tokenData));
       return backToLogin('bytenode_error');
     }
@@ -416,7 +536,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     });
     const bnUser = await userRes.json().catch(() => null);
     const bnId = String(bnUser?.id || bnUser?.userId || bnUser?.sub || bnUser?.user?.id || '');
-    if (!bnId) {
+    if (!userRes.ok || !bnId) {
       console.error('[bytenode/callback] userinfo error:', JSON.stringify(bnUser));
       return backToLogin('bytenode_error');
     }
@@ -461,18 +581,13 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     setRefreshCookie(res, refreshId, true);
 
     // 5) 원래 redirect_uri로 복귀
-    if (originalRedirectUri && originalRedirectUri !== '/') {
+    if (originalRedirectUri) {
       // SSO 콜백 URL이면 토큰 직접 발급
-      try {
-        const url = new URL(originalRedirectUri);
-        if (url.pathname.startsWith('/api/auth/sso')) {
-          const ssoToken = await signSSO(user.id, user.role);
-          url.searchParams.set('token', ssoToken);
-          return res.redirect(url.toString());
-        }
-      } catch {}
-      // 그 외 → redirect_uri 유지하며 홈으로 (프론트가 afterAuth로 처리)
-      return res.redirect('/?redirect_uri=' + encodeURIComponent(originalRedirectUri));
+      const url = new URL(originalRedirectUri);
+      const ssoToken = await signSSO(user.id, user.role, url.origin);
+      url.searchParams.set('token', ssoToken);
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return res.redirect(url.toString());
     }
     res.redirect('/');
   } catch (e) {
