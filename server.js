@@ -9,6 +9,7 @@ const { v4: uuid } = require('uuid');
 const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const cors        = require('cors');
+const nodemailer  = require('nodemailer');
 const { SignJWT, jwtVerify } = require('jose');
 const admin       = require('firebase-admin');
 
@@ -137,6 +138,12 @@ const reportLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
 });
 
+const emailCodeLimiter = rateLimit({
+  windowMs: 10 * 60_000, max: 5,
+  message: { ok: false, error: 'too_many_email_codes' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
 // ── JWT 헬퍼 ─────────────────────────────────────────────────────────────────
 const ACCESS_TTL         = 15 * 60;
 const REFRESH_TTL_SHORT  = 24 * 60 * 60;
@@ -157,8 +164,8 @@ async function verifyAccess(token) {
   } catch { return null; }
 }
 
-async function signSSO(userId, role, audience) {
-  return new SignJWT({ userId, role, sso: true })
+async function signSSO(userId, role, audience, remember = false) {
+  return new SignJWT({ userId, role, remember: remember === true, sso: true })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setAudience(audience)
@@ -229,6 +236,15 @@ async function getRefresh(id) {
 }
 async function deleteRefresh(id) {
   await db.collection('refreshTokens').doc(id).delete();
+}
+
+async function getSessionRemember(req) {
+  if (typeof req.session?.remember === 'boolean') return req.session.remember;
+  const refreshId = parseCookies(req).sv_refresh;
+  if (!refreshId) return false;
+  const stored = await getRefresh(refreshId).catch(() => null);
+  return !!(stored && stored.userId === req.session?.userId
+    && stored.expiresAt >= Date.now() && stored.remember === true);
 }
 
 // ── 쿠키 세터 ────────────────────────────────────────────────────────────────
@@ -325,7 +341,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
     const [accessToken] = await Promise.all([
-      signAccess({ userId: id, role: 'pending', sessionVersion: sv, authVersion: 0 }),
+      signAccess({ userId: id, role: 'pending', sessionVersion: sv, authVersion: 0, remember: false }),
       storeRefresh(refreshId, { userId: id, role: 'pending', remember: false, authVersion: 0,
         sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_SHORT * 1000 }),
     ]);
@@ -341,6 +357,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
 // POST /api/auth/login
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const { username, email, password, remember } = req.body || {};
+  const shouldRemember = remember === true;
   const identifier = String(username ?? email ?? '').trim();
   if (!identifier || !password)
     return res.status(400).json({ ok: false, error: 'missing_fields' });
@@ -357,14 +374,15 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
-    const ttl = remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
+    const ttl = shouldRemember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
     const [accessToken] = await Promise.all([
-      signAccess({ userId: user.id, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
+      signAccess({ userId: user.id, role: user.role, sessionVersion: sv,
+        authVersion: user.authVersion || 0, remember: shouldRemember }),
       storeRefresh(refreshId, { userId: user.id, role: user.role,
-        remember: !!remember, sessionVersion: sv, authVersion: user.authVersion || 0, expiresAt: Date.now() + ttl * 1000 }),
+        remember: shouldRemember, sessionVersion: sv, authVersion: user.authVersion || 0, expiresAt: Date.now() + ttl * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
-    setRefreshCookie(res, refreshId, !!remember);
+    setRefreshCookie(res, refreshId, shouldRemember);
     const { id, username: un, displayName, role } = user;
     res.json({ ok: true, user: { id, username: un, displayName, role } });
   } catch (e) {
@@ -445,7 +463,8 @@ app.post('/api/auth/refresh', async (req, res) => {
     const newId = newRefreshId();
     const ttl = stored.remember ? REFRESH_TTL_LONG : REFRESH_TTL_SHORT;
     const [accessToken] = await Promise.all([
-      signAccess({ userId: stored.userId, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
+      signAccess({ userId: stored.userId, role: user.role, sessionVersion: sv,
+        authVersion: user.authVersion || 0, remember: stored.remember === true }),
       deleteRefresh(refreshId),
       storeRefresh(newId, { ...stored, role: user.role, sessionVersion: sv,
         authVersion: user.authVersion || 0, expiresAt: Date.now() + ttl * 1000 }),
@@ -480,7 +499,8 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
     }
 
     const url = new URL(redirectUri);
-    const token = await signSSO(user.id, user.role, url.origin);
+    const remember = await getSessionRemember(req);
+    const token = await signSSO(user.id, user.role, url.origin, remember);
     url.searchParams.set('token', token);
     res.json({ ok: true, redirectUrl: url.toString() });
   } catch (e) {
@@ -519,6 +539,7 @@ async function handleSSOVerify(req, res) {
       ok: true,
       userId: user.id,
       role: user.role || 'user',
+      remember: payload.remember === true,
       user: {
         id: user.id,
         username: user.username || '',
@@ -562,6 +583,8 @@ function publicAccountProfile(user, hasPassword) {
     username: user.username || '',
     displayName: user.displayName || user.nickname || user.name || user.username || '',
     email: user.email || '',
+    emailVerified: !!user.email && !!user.emailVerifiedAt,
+    emailVerifiedAt: user.emailVerifiedAt || null,
     role: user.role || 'user',
     hasPassword,
     hasBytenode: !!user.bytenodeId,
@@ -582,12 +605,9 @@ app.get('/api/account/profile', requireAuth, async (req, res) => {
 
 app.patch('/api/account/profile', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
   const displayName = String(req.body?.displayName || '').trim();
-  const email = String(req.body?.email || '').trim().toLowerCase();
+  const requestedEmail = req.body?.email == null ? null : String(req.body.email).trim().toLowerCase();
   if (displayName.length < 1 || displayName.length > 40) {
     return res.status(400).json({ ok: false, error: 'invalid_display_name' });
-  }
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return res.status(400).json({ ok: false, error: 'invalid_email' });
   }
   try {
     let updated;
@@ -597,19 +617,160 @@ app.patch('/api/account/profile', requireAuth, requireAccountOrigin, authLimiter
       const users = snap.exists ? (snap.data()?.value ?? []) : [];
       const index = users.findIndex(u => u.id === req.session.userId);
       if (index < 0 || users[index].isBanned) throw new Error('invalid_session');
-      if (email && users.some((u, i) => i !== index && String(u.email || '').toLowerCase() === email)) {
-        throw new Error('email_taken');
+      if (requestedEmail !== null && requestedEmail !== String(users[index].email || '').toLowerCase()) {
+        throw new Error('email_verification_required');
       }
-      updated = { ...users[index], displayName, nickname: displayName, email };
+      updated = { ...users[index], displayName, nickname: displayName };
       users[index] = updated;
       tx.set(ref, { value: users });
     });
     const creds = await getCreds();
     res.json({ ok: true, profile: publicAccountProfile(updated, !!creds[updated.id]) });
   } catch (e) {
-    const error = e?.message === 'email_taken' ? 'email_taken'
+    const error = e?.message === 'email_verification_required' ? 'email_verification_required'
       : e?.message === 'invalid_session' ? 'invalid_session' : 'server_error';
-    res.status(error === 'server_error' ? 500 : error === 'email_taken' ? 409 : 401).json({ ok: false, error });
+    res.status(error === 'server_error' ? 500 : error === 'email_verification_required' ? 409 : 401).json({ ok: false, error });
+  }
+});
+
+// ── 이메일 소유권 인증 ──────────────────────────────────────────────────────
+const EMAIL_CODES_COL = 'emailVerificationCodes';
+const EMAIL_CODE_TTL = 10 * 60_000;
+const EMAIL_CODE_MAX_ATTEMPTS = 5;
+
+function emailCodeHash(userId, email, code) {
+  return crypto.createHmac('sha256', Buffer.from(SESSION_SECRET))
+    .update(`${userId}:${email}:${code}`)
+    .digest('hex');
+}
+
+async function sendVerificationEmail(email, code) {
+  const smtpPass = process.env.OUTLOOK_APP_PASSWORD;
+  if (!smtpPass) throw new Error('email_not_configured');
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: process.env.EMAIL_SMTP_USER || 'scivillclub@gmail.com', pass: smtpPass },
+  });
+  const fromAddress = process.env.EMAIL_FROM || 'Scivill <scivillclub@gmail.com>';
+  await transporter.sendMail({
+    from: fromAddress,
+    to: email,
+    subject: '[Scivill] 이메일 인증 코드',
+    text: `Scivill 이메일 인증 코드는 ${code} 입니다. 이 코드는 10분 후 만료되며 한 번만 사용할 수 있습니다.`,
+    html: `<!doctype html><html lang="ko"><body style="margin:0;background:#09090b;color:#fff;font-family:Arial,sans-serif"><table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 16px"><table width="100%" style="max-width:520px;background:#141419;border:1px solid #2b2b33;border-radius:18px"><tr><td style="padding:32px"><p style="margin:0 0 8px;color:#8b8b9b;font-size:12px;font-weight:700;letter-spacing:.14em">DS-GO ACCOUNT</p><h1 style="margin:0 0 14px;font-size:24px">이메일 인증</h1><p style="margin:0 0 24px;color:#aaaaba;font-size:14px;line-height:1.7">계정 설정에서 요청한 6자리 인증 코드입니다.</p><div style="padding:24px;border:1px solid #6366f1;border-radius:14px;background:#191925;text-align:center;font-size:38px;font-weight:900;letter-spacing:.22em">${code}</div><p style="margin:24px 0 0;color:#777785;font-size:12px;line-height:1.7">10분 안에 입력해주세요. 본인이 요청하지 않았다면 이 메일을 무시하고 코드를 공유하지 마세요.</p></td></tr></table></td></tr></table></body></html>`,
+  });
+}
+
+app.post('/api/account/email/send-code', requireAuth, requireAccountOrigin, emailCodeLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ ok: false, error: 'invalid_email' });
+  }
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const users = await getUsers();
+    if (users.some(u => u.id !== account.user.id && String(u.email || '').toLowerCase() === email)) {
+      return res.status(409).json({ ok: false, error: 'email_taken' });
+    }
+    const code = String(crypto.randomInt(100000, 1000000));
+    const ref = db.collection(EMAIL_CODES_COL).doc(account.user.id);
+    const now = Date.now();
+    let sendError = '';
+    await db.runTransaction(async tx => {
+      const previousSnap = await tx.get(ref);
+      const previous = previousSnap.exists ? previousSnap.data() : null;
+      if (previous && previous.createdAt > now - 60_000) {
+        sendError = 'email_code_cooldown';
+        return;
+      }
+      const inSameWindow = previous && previous.windowStartedAt > now - 10 * 60_000;
+      const sendCount = inSameWindow ? (previous.sendCount || 0) + 1 : 1;
+      if (sendCount > 5) {
+        sendError = 'too_many_email_codes';
+        return;
+      }
+      tx.set(ref, {
+        userId: account.user.id,
+        email,
+        codeHash: emailCodeHash(account.user.id, email, code),
+        attempts: 0,
+        sendCount,
+        windowStartedAt: inSameWindow ? previous.windowStartedAt : now,
+        createdAt: now,
+        expiresAt: now + EMAIL_CODE_TTL,
+      });
+    });
+    if (sendError) return res.status(429).json({ ok: false, error: sendError });
+    try {
+      await sendVerificationEmail(email, code);
+    } catch (sendError) {
+      await ref.delete().catch(() => {});
+      throw sendError;
+    }
+    res.json({ ok: true, expiresIn: EMAIL_CODE_TTL / 1000 });
+  } catch (e) {
+    console.error('[account/email/send-code]', e?.message || e);
+    const error = e?.message === 'email_not_configured' ? 'email_not_configured' : 'email_send_failed';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+app.post('/api/account/email/verify', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const code = String(req.body?.code || '').trim();
+  if (!email || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ ok: false, error: 'invalid_email_code' });
+  }
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    let updatedUser;
+    let verificationError = '';
+    await db.runTransaction(async tx => {
+      const codeRef = db.collection(EMAIL_CODES_COL).doc(account.user.id);
+      const usersRef = db.collection(SHARED_COL).doc('users');
+      const [codeSnap, usersSnap] = await Promise.all([tx.get(codeRef), tx.get(usersRef)]);
+      const stored = codeSnap.exists ? codeSnap.data() : null;
+      if (!stored || stored.email !== email || stored.expiresAt < Date.now()) {
+        if (codeSnap.exists) tx.delete(codeRef);
+        verificationError = 'email_code_expired';
+        return;
+      }
+      if ((stored.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) {
+        tx.delete(codeRef);
+        verificationError = 'too_many_email_attempts';
+        return;
+      }
+      const expected = Buffer.from(stored.codeHash, 'hex');
+      const actual = Buffer.from(emailCodeHash(account.user.id, email, code), 'hex');
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+        const attempts = (stored.attempts || 0) + 1;
+        if (attempts >= EMAIL_CODE_MAX_ATTEMPTS) tx.delete(codeRef);
+        else tx.update(codeRef, { attempts });
+        verificationError = attempts >= EMAIL_CODE_MAX_ATTEMPTS ? 'too_many_email_attempts' : 'invalid_email_code';
+        return;
+      }
+      const users = usersSnap.exists ? (usersSnap.data()?.value ?? []) : [];
+      const index = users.findIndex(u => u.id === account.user.id);
+      if (index < 0 || users[index].isBanned) throw new Error('invalid_session');
+      if (users.some((u, i) => i !== index && String(u.email || '').toLowerCase() === email)) {
+        throw new Error('email_taken');
+      }
+      updatedUser = { ...users[index], email, emailVerifiedAt: Date.now() };
+      users[index] = updatedUser;
+      tx.set(usersRef, { value: users });
+      tx.delete(codeRef);
+    });
+    if (verificationError) throw new Error(verificationError);
+    res.json({ ok: true, profile: publicAccountProfile(updatedUser, account.hasPassword) });
+  } catch (e) {
+    const error = ['email_code_expired', 'too_many_email_attempts', 'invalid_email_code', 'invalid_session', 'email_taken'].includes(e?.message)
+      ? e.message : 'server_error';
+    const status = error === 'invalid_session' ? 401 : error === 'email_taken' ? 409
+      : error === 'too_many_email_attempts' ? 429 : error === 'server_error' ? 500 : 400;
+    if (error === 'server_error') console.error('[account/email/verify]', e);
+    res.status(status).json({ ok: false, error });
   }
 });
 
@@ -666,11 +827,13 @@ app.post('/api/account/local-credentials', requireAuth, requireAccountOrigin, au
     const currentRefresh = parseCookies(req).sv_refresh;
     const refreshSnap = await db.collection('refreshTokens').where('userId', '==', req.session.userId).get();
     const sessionVersion = await getSessionVersion();
+    const remember = await getSessionRemember(req);
     const freshAccess = await signAccess({
       userId: updatedUser.id,
       role: updatedUser.role,
       sessionVersion,
       authVersion: updatedUser.authVersion,
+      remember,
     });
     await Promise.all(refreshSnap.docs.map(doc => {
       if (doc.id === currentRefresh) {
@@ -1052,7 +1215,8 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
     const [svAccessToken] = await Promise.all([
-      signAccess({ userId: user.id, role: user.role, sessionVersion: sv, authVersion: user.authVersion || 0 }),
+      signAccess({ userId: user.id, role: user.role, sessionVersion: sv,
+        authVersion: user.authVersion || 0, remember: true }),
       storeRefresh(refreshId, { userId: user.id, role: user.role, remember: true,
         sessionVersion: sv, authVersion: user.authVersion || 0, expiresAt: Date.now() + REFRESH_TTL_LONG * 1000 }),
     ]);
@@ -1066,7 +1230,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     if (originalRedirectUri) {
       // SSO 콜백 URL이면 토큰 직접 발급
       const url = new URL(originalRedirectUri);
-      const ssoToken = await signSSO(user.id, user.role, url.origin);
+      const ssoToken = await signSSO(user.id, user.role, url.origin, true);
       url.searchParams.set('token', ssoToken);
       res.setHeader('Referrer-Policy', 'no-referrer');
       return res.redirect(url.toString());
