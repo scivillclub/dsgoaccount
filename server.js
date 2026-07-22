@@ -31,6 +31,9 @@ const SESSION_SECRET = new TextEncoder().encode(
   process.env.SESSION_SECRET || (() => { throw new Error('SESSION_SECRET 없음'); })()
 );
 const SSO_SECRET = new TextEncoder().encode(process.env.SESSION_SECRET);
+const ACCOUNT_PROXY_SECRET = process.env.ACCOUNT_PROXY_SECRET
+  ? new TextEncoder().encode(process.env.ACCOUNT_PROXY_SECRET)
+  : null;
 
 const DEFAULT_ALLOWED_ORIGINS = [
   // The hosted login/register page posts JSON back to this same Express app.
@@ -322,6 +325,39 @@ async function requireAuth(req, res, next) {
   next();
 }
 
+async function requireAccountAuth(req, res, next) {
+  const authorization = req.get('authorization') || '';
+  const headerToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  const queryToken = req.method === 'GET' && req.path === '/api/account/bytenode/link'
+    ? String(req.query.proxy_token || '') : '';
+  const token = headerToken || queryToken;
+  if (!token) return requireAuth(req, res, next);
+  if (!ACCOUNT_PROXY_SECRET) {
+    return res.status(503).json({ ok: false, error: 'account_proxy_not_configured' });
+  }
+  try {
+    const { payload } = await jwtVerify(token, ACCOUNT_PROXY_SECRET, {
+      algorithms: ['HS256'],
+      issuer: 'dsgo',
+      audience: 'dsgoaccount',
+    });
+    if (typeof payload.userId !== 'string' || !payload.userId
+      || payload.path !== req.path || payload.method !== req.method) {
+      return res.status(401).json({ ok: false, error: 'invalid_service_assertion' });
+    }
+    req.session = {
+      userId: payload.userId,
+      role: typeof payload.role === 'string' ? payload.role : 'user',
+      sessionVersion: Number.isInteger(payload.sessionVersion) ? payload.sessionVersion : -1,
+      authVersion: Number.isInteger(payload.authVersion) ? payload.authVersion : -1,
+      serviceProxy: true,
+    };
+    next();
+  } catch {
+    return res.status(401).json({ ok: false, error: 'invalid_service_assertion' });
+  }
+}
+
 // ── PBKDF2 해시 ──────────────────────────────────────────────────────────────
 function hashPw(password, userId) {
   return new Promise((resolve, reject) => {
@@ -606,7 +642,7 @@ async function handleSSOVerify(req, res) {
   if (!payload) return res.status(401).json({ ok: false, error: 'invalid_token' });
 
   try {
-    const users = await getUsers();
+    const [users, sessionVersion] = await Promise.all([getUsers(), getSessionVersion()]);
     const user = users.find(u => u.id === payload.userId);
     if (!user) return res.status(401).json({ ok: false, error: 'user_not_found' });
     if (user.isBanned) return res.status(403).json({ ok: false, error: 'user_banned' });
@@ -616,6 +652,8 @@ async function handleSSOVerify(req, res) {
       userId: user.id,
       role: user.role || 'user',
       remember: payload.remember === true,
+      sessionVersion,
+      authVersion: user.authVersion || 0,
       user: {
         id: user.id,
         username: user.username || '',
@@ -668,7 +706,7 @@ function publicAccountProfile(user, hasPassword) {
   };
 }
 
-app.get('/api/account/profile', requireAuth, async (req, res) => {
+app.get('/api/account/profile', requireAccountAuth, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
@@ -679,7 +717,7 @@ app.get('/api/account/profile', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/account/profile', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+app.patch('/api/account/profile', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
   const displayName = String(req.body?.displayName || '').trim();
   const requestedEmail = req.body?.email == null ? null : String(req.body.email).trim().toLowerCase();
   if (displayName.length < 1 || displayName.length > 40) {
@@ -862,7 +900,7 @@ app.post('/api/auth/register/email/verify', requireRegistrationOrigin, authLimit
   }
 });
 
-app.post('/api/account/email/send-code', requireAuth, requireAccountOrigin, emailCodeLimiter, async (req, res) => {
+app.post('/api/account/email/send-code', requireAccountAuth, requireAccountOrigin, emailCodeLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return res.status(400).json({ ok: false, error: 'invalid_email' });
@@ -917,7 +955,7 @@ app.post('/api/account/email/send-code', requireAuth, requireAccountOrigin, emai
   }
 });
 
-app.post('/api/account/email/verify', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+app.post('/api/account/email/verify', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
   const code = String(req.body?.code || '').trim();
   if (!email || !/^\d{6}$/.test(code)) {
@@ -975,7 +1013,7 @@ app.post('/api/account/email/verify', requireAuth, requireAccountOrigin, authLim
   }
 });
 
-app.post('/api/account/local-credentials', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+app.post('/api/account/local-credentials', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
   const username = String(req.body?.username || '').trim();
   const currentPassword = String(req.body?.currentPassword || '');
   const newPassword = String(req.body?.newPassword || '');
@@ -1050,7 +1088,7 @@ app.post('/api/account/local-credentials', requireAuth, requireAccountOrigin, au
   }
 });
 
-app.post('/api/account/bytenode/unlink', requireAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+app.post('/api/account/bytenode/unlink', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
@@ -1113,7 +1151,7 @@ function messageView(doc) {
   return { id: doc.id, ...data };
 }
 
-app.post('/api/account/reports', requireAuth, requireAccountOrigin, reportLimiter, async (req, res) => {
+app.post('/api/account/reports', requireAccountAuth, requireAccountOrigin, reportLimiter, async (req, res) => {
   const targetUsername = String(req.body?.targetUsername || '').trim();
   const targetDisplayName = String(req.body?.targetDisplayName || '').trim();
   const reason = String(req.body?.reason || '').trim();
@@ -1152,7 +1190,7 @@ app.post('/api/account/reports', requireAuth, requireAccountOrigin, reportLimite
   }
 });
 
-app.get('/api/account/inbox', requireAuth, async (req, res) => {
+app.get('/api/account/inbox', requireAccountAuth, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
@@ -1165,7 +1203,7 @@ app.get('/api/account/inbox', requireAuth, async (req, res) => {
   }
 });
 
-app.patch('/api/account/inbox/:id/read', requireAuth, requireAccountOrigin, async (req, res) => {
+app.patch('/api/account/inbox/:id/read', requireAccountAuth, requireAccountOrigin, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
@@ -1277,7 +1315,7 @@ app.post('/api/admin/messages', requireAuth, requireAdminOrigin, requireAdminAcc
   }
 });
 
-app.get('/api/account/bytenode/link', requireAuth, async (req, res) => {
+app.get('/api/account/bytenode/link', requireAccountAuth, async (req, res) => {
   if (!BYTENODE_CLIENT_ID || !BYTENODE_CLIENT_SECRET) {
     return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?bytenode=config_error`);
   }
