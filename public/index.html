@@ -122,7 +122,7 @@
 
     .form-box {
       width: 100%;
-      max-width: 320px;
+      max-width: 390px;
       margin: auto 0;
       padding: 24px 0 16px;
     }
@@ -257,6 +257,67 @@
     .logged-in { display: none; text-align: center; }
     .logged-in.on { display: block; }
 
+    .reg-progress-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 11px; font-weight: 700; color: var(--fp-muted);
+    }
+    .reg-progress-head strong { color: #a99df5; font-weight: 700; }
+    .reg-progress {
+      display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px;
+      margin-bottom: 22px;
+    }
+    .reg-progress span { height: 3px; border-radius: 99px; background: rgba(255,255,255,.09); }
+    .reg-progress span.done { background: rgba(108,92,231,.45); }
+    .reg-progress span.active { background: #8b7cf6; }
+    .reg-step { display: none; min-height: 220px; }
+    .reg-step.on { display: block; animation: stepIn .2s ease; }
+    @keyframes stepIn { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: none; } }
+    .reg-kicker {
+      color: #8b7cf6; font-size: 10px; font-weight: 800;
+      letter-spacing: .14em; text-transform: uppercase; margin-bottom: 7px;
+    }
+    .reg-title { color: var(--fp-fg); font-size: 21px; line-height: 1.35; letter-spacing: -.04em; margin-bottom: 7px; }
+    .reg-desc { color: var(--fp-muted); font-size: 12px; line-height: 1.65; margin-bottom: 20px; }
+    .reg-actions { display: flex; gap: 8px; margin-top: 18px; }
+    .reg-actions .submit { flex: 1; }
+    .secondary {
+      background: rgba(255,255,255,.06); color: var(--fp-fg);
+      border: 1px solid var(--fp-line);
+    }
+    .agreement-card {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 13px; margin-bottom: 9px; border: 1px solid var(--fp-line);
+      border-radius: 11px; background: rgba(255,255,255,.025);
+      color: var(--fp-fg); font-size: 12px; line-height: 1.55; cursor: pointer;
+    }
+    .agreement-card input { margin-top: 2px; width: 15px; height: 15px; accent-color: var(--brand); flex: 0 0 auto; }
+    .agreement-card a { color: #a99df5; text-decoration: none; }
+    .agreement-card a:hover { text-decoration: underline; }
+    .email-row { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+    .email-row .submit { width: auto; padding: 0 14px; white-space: nowrap; }
+    .otp-wrap { display: none; margin-top: 10px; }
+    .otp-wrap.on { display: block; }
+    .otp-input { letter-spacing: .28em; font-size: 18px !important; font-weight: 800; text-align: center; }
+    .email-status { min-height: 19px; margin-top: 8px; font-size: 11.5px; color: var(--fp-muted); }
+    .email-status.ok { color: #68d391; }
+    .email-status.err { color: #fc8181; }
+    .completion-mark {
+      width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center;
+      background: rgba(72,187,120,.1); border: 1px solid rgba(72,187,120,.25);
+      color: #68d391; font-size: 28px; margin-bottom: 18px;
+    }
+    .service-list { display: grid; gap: 8px; margin: 16px 0 20px; }
+    .service-item {
+      display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: center;
+      padding: 10px; border: 1px solid var(--fp-line); border-radius: 11px;
+      background: rgba(255,255,255,.025);
+    }
+    .service-icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: rgba(108,92,231,.13); color: #a99df5; font-weight: 900; font-size: 12px; }
+    .service-item b { display: block; color: var(--fp-fg); font-size: 12px; }
+    .service-item span { display: block; color: var(--fp-muted); font-size: 10.5px; margin-top: 2px; }
+    .reg-alternative { margin-top: 14px; }
+
     /* DSHS 하단 */
     .dshs-footer {
       margin-top: auto;
@@ -277,6 +338,7 @@
       .art-label { left: 24px; }
       .art-label h2 { font-size: 22px; }
       .form-panel-wrap { padding: 36px 24px; }
+      .form-box { max-width: 420px; }
     }
   </style>
 </head>
@@ -377,37 +439,97 @@
       <!-- 회원가입 -->
       <div class="fpanel" id="p-reg">
         <form onsubmit="handleRegister(event)" novalidate>
-          <div class="fg">
-            <label class="fl" for="r-un">아이디 <span class="hint">영문·숫자·_ 3~20자</span></label>
-            <input type="text" id="r-un" placeholder="아이디" autocomplete="username" required />
+          <div class="reg-progress-head">
+            <strong id="reg-step-label">STEP 1</strong>
+            <span id="reg-step-count">7단계 중 1단계</span>
           </div>
-          <div class="fg">
-            <label class="fl" for="r-dn">표시 이름</label>
-            <input type="text" id="r-dn" placeholder="홍길동" autocomplete="name" required />
+          <div class="reg-progress" aria-hidden="true">
+            <span class="active"></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
-          <div class="fg">
-            <label class="fl" for="r-em">이메일 <span class="hint">선택</span></label>
-            <input type="email" id="r-em" placeholder="example@dshs.kr" autocomplete="email" />
-          </div>
-          <div class="fg" style="margin-bottom:20px">
-            <label class="fl" for="r-pw">비밀번호 <span class="hint">6자 이상</span></label>
-            <input type="password" id="r-pw" placeholder="비밀번호" autocomplete="new-password" required />
-          </div>
-          <button type="submit" class="submit" id="reg-btn">
-            계정 만들기
-            <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg>
-          </button>
+
+          <section class="reg-step on" data-step="1">
+            <div class="reg-kicker">Agreement</div>
+            <h2 class="reg-title">약관을 확인해주세요</h2>
+            <p class="reg-desc">DS-GO와 Scivill 서비스를 이용하기 위해 필수 항목에 동의해주세요.</p>
+            <label class="agreement-card">
+              <input type="checkbox" id="r-terms" />
+              <span><b>이용약관 동의</b> <span style="color:var(--fp-muted)">(필수)</span><br /><a href="https://scivill.vercel.app/terms" target="_blank" rel="noopener noreferrer">이용약관 전문 보기</a></span>
+            </label>
+            <label class="agreement-card">
+              <input type="checkbox" id="r-privacy" />
+              <span><b>개인정보 처리방침 동의</b> <span style="color:var(--fp-muted)">(필수)</span><br /><a href="https://scivill.vercel.app/privacy" target="_blank" rel="noopener noreferrer">개인정보 처리방침 전문 보기</a></span>
+            </label>
+            <div class="reg-actions"><button type="button" class="submit" onclick="nextRegisterStep()">동의하고 계속 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+          </section>
+
+          <section class="reg-step" data-step="2">
+            <div class="reg-kicker">Profile</div>
+            <h2 class="reg-title">어떤 이름으로 표시할까요?</h2>
+            <p class="reg-desc">모든 Scivill 서비스에서 다른 사용자에게 보이는 이름입니다.</p>
+            <div class="fg"><label class="fl" for="r-dn">표시 이름 <span class="hint">1~40자</span></label><input type="text" id="r-dn" placeholder="홍길동" autocomplete="name" maxlength="40" /></div>
+            <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+          </section>
+
+          <section class="reg-step" data-step="3">
+            <div class="reg-kicker">Account ID</div>
+            <h2 class="reg-title">로그인 아이디를 정해주세요</h2>
+            <p class="reg-desc">DS-GO 계정으로 로그인할 때 사용합니다. 가입 후 변경할 수 없습니다.</p>
+            <div class="fg"><label class="fl" for="r-un">아이디 <span class="hint">영문·숫자·_ 3~20자</span></label><input type="text" id="r-un" placeholder="아이디" autocomplete="username" maxlength="20" /></div>
+            <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+          </section>
+
+          <section class="reg-step" data-step="4">
+            <div class="reg-kicker">Email · Optional</div>
+            <h2 class="reg-title">이메일을 연결할까요?</h2>
+            <p class="reg-desc">선택 사항입니다. 입력한다면 실제 메일로 받은 6자리 코드를 인증해야 합니다.</p>
+            <div class="fg">
+              <label class="fl" for="r-em">이메일 <span class="hint">선택</span></label>
+              <div class="email-row"><input type="email" id="r-em" placeholder="example@email.com" autocomplete="email" /><button type="button" class="submit secondary" id="reg-email-send">인증코드 받기</button></div>
+              <div class="otp-wrap" id="reg-otp-wrap"><div class="email-row"><input type="text" class="otp-input" id="r-email-code" placeholder="000000" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><button type="button" class="submit" id="reg-email-verify">인증하기</button></div></div>
+              <div class="email-status" id="reg-email-status">이메일 없이도 모든 서비스를 이용할 수 있습니다.</div>
+            </div>
+            <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit secondary" id="reg-email-skip">건너뛰기</button><button type="button" class="submit" id="reg-email-next" disabled>다음</button></div>
+          </section>
+
+          <section class="reg-step" data-step="5">
+            <div class="reg-kicker">Password</div>
+            <h2 class="reg-title">비밀번호를 만들어주세요</h2>
+            <p class="reg-desc">동일한 비밀번호를 한 번 더 입력해 정확히 확인합니다.</p>
+            <div class="fg"><label class="fl" for="r-pw">비밀번호 <span class="hint">6~128자</span></label><input type="password" id="r-pw" placeholder="비밀번호" autocomplete="new-password" maxlength="128" /></div>
+            <div class="fg"><label class="fl" for="r-pw-confirm">비밀번호 확인</label><input type="password" id="r-pw-confirm" placeholder="비밀번호를 다시 입력" autocomplete="new-password" maxlength="128" /></div>
+            <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="submit" class="submit" id="reg-btn">회원가입 완료 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+          </section>
+
+          <section class="reg-step" data-step="6">
+            <div class="completion-mark">✓</div>
+            <div class="reg-kicker">Welcome</div>
+            <h2 class="reg-title">회원가입이 완료되었습니다</h2>
+            <p class="reg-desc"><b id="reg-complete-name" style="color:var(--fp-fg)"></b>님, DS-GO에 오신 것을 환영합니다. 이제 하나의 계정으로 Scivill 서비스를 이용할 수 있습니다.</p>
+            <div class="reg-actions"><button type="button" class="submit" onclick="setRegisterStep(7)">서비스 알아보기 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+          </section>
+
+          <section class="reg-step" data-step="7">
+            <div class="reg-kicker">Scivill Services</div>
+            <h2 class="reg-title">하나의 계정, 이어지는 서비스</h2>
+            <p class="reg-desc">DS-GO에서 시작해 필요한 도구를 자유롭게 오가세요. 로그인은 안전하게 이어집니다.</p>
+            <div class="service-list">
+              <div class="service-item"><div class="service-icon">DS</div><div><b>DS-GO</b><span>모든 Scivill 서비스의 시작 화면</span></div></div>
+              <div class="service-item"><div class="service-icon">AI</div><div><b>Deepthink</b><span>생각과 학습을 돕는 AI 도구</span></div></div>
+              <div class="service-item"><div class="service-icon">ON</div><div><b>OnSheet · OryaForm</b><span>자료와 응답을 빠르게 정리하는 도구</span></div></div>
+              <div class="service-item"><div class="service-icon">QR</div><div><b>QRLink</b><span>링크를 간편하게 연결하고 공유</span></div></div>
+            </div>
+            <button type="button" class="submit" id="reg-finish-btn">DS-GO 시작하기 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button>
+          </section>
+
           <div class="msg" id="reg-msg"></div>
         </form>
-        <div style="display:flex;align-items:center;gap:10px;margin:12px 0 4px;">
-          <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
-          <span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span>
-          <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
+        <div class="reg-alternative" id="reg-alternative">
+          <div style="display:flex;align-items:center;gap:10px;margin:12px 0 7px;"><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div><span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div></div>
+          <button type="button" id="bytenode-reg-btn" class="submit secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
+            bytenode 계정으로 회원가입
+          </button>
         </div>
-        <button type="button" id="bytenode-reg-btn" class="submit" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
-          bytenode 계정으로 회원가입
-        </button>
       </div>
       </div>
     </div>
@@ -500,6 +622,18 @@
       invalid_credentials: '아이디 또는 비밀번호가 올바르지 않습니다.',
       invalid_username:    '아이디는 영문·숫자·_로 3~20자여야 합니다.',
       invalid_password:    '비밀번호는 6자 이상이어야 합니다.',
+      invalid_display_name:'표시 이름은 1~40자로 입력해주세요.',
+      agreements_required: '이용약관과 개인정보 처리방침에 동의해주세요.',
+      invalid_email:       '올바른 이메일 주소를 입력해주세요.',
+      email_taken:         '이미 다른 계정에서 사용 중인 이메일입니다.',
+      email_verification_required: '이메일 인증을 완료해주세요.',
+      invalid_email_code:  '인증 코드가 올바르지 않습니다.',
+      email_code_expired:  '인증 코드가 만료되었습니다. 새 코드를 받아주세요.',
+      email_code_cooldown: '인증 코드는 1분 후 다시 받을 수 있습니다.',
+      too_many_email_codes:'인증 코드 요청이 너무 많습니다. 10분 후 다시 시도해주세요.',
+      too_many_email_attempts:'인증 시도 횟수를 초과했습니다. 새 코드를 받아주세요.',
+      email_send_failed:   '인증 메일을 보내지 못했습니다. 잠시 후 다시 시도해주세요.',
+      email_not_configured:'메일 발송 설정을 확인해주세요.',
       already_exists:      '이미 사용 중인 아이디 또는 이메일입니다.',
       too_many_attempts:   '시도 횟수 초과. 15분 후 다시 시도하세요.',
       too_many_requests:   '요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
@@ -542,15 +676,15 @@
       return fetch(url, { ...options, credentials: 'include', cache: 'no-store' });
     }
 
-    async function afterAuth() {
+    async function afterAuth(messageId = 'login-msg') {
       if (redirectUri) {
         const r = await authFetch('/api/auth/sso/issue?redirect_uri=' + encodeURIComponent(redirectUri));
         const d = await r.json();
         if (d.ok) { location.href = d.redirectUrl; return; }
-        showMsg('login-msg', ERR[d.error] || '서비스 로그인 연결에 실패했습니다.', 'err');
+        showMsg(messageId, ERR[d.error] || '서비스 로그인 연결에 실패했습니다.', 'err');
         return;
       }
-      showMsg('login-msg', '로그인되었습니다.', 'ok');
+      showMsg(messageId, '로그인되었습니다.', 'ok');
     }
 
     // ── Bytenode OAuth ───────────────────────────────────────────────────────
@@ -589,9 +723,162 @@
       finally { btn.disabled = false; btn.innerHTML = '로그인 ' + ARROW; }
     }
 
-    // ── 회원가입 ─────────────────────────────────────────────────────────────
+    // ── 7단계 회원가입 ──────────────────────────────────────────────────────
+    let registrationStep = 1;
+    let registrationEmailVerified = false;
+    let registrationVerifiedEmail = '';
+    let registrationComplete = false;
+    let emailCooldownTimer = null;
+
+    function setRegisterStep(step) {
+      if ((step === 6 || step === 7) && !registrationComplete) return;
+      registrationStep = Math.max(1, Math.min(7, step));
+      document.querySelectorAll('.reg-step').forEach(el => {
+        el.classList.toggle('on', Number(el.dataset.step) === registrationStep);
+      });
+      document.querySelectorAll('.reg-progress span').forEach((el, index) => {
+        el.classList.toggle('done', index + 1 < registrationStep);
+        el.classList.toggle('active', index + 1 === registrationStep);
+      });
+      document.getElementById('reg-step-label').textContent = `STEP ${registrationStep}`;
+      document.getElementById('reg-step-count').textContent = `7단계 중 ${registrationStep}단계`;
+      document.getElementById('reg-alternative').style.display = registrationStep === 1 ? 'block' : 'none';
+      showMsg('reg-msg', '', '');
+    }
+
+    function registrationError(message) {
+      showMsg('reg-msg', message, 'err');
+    }
+
+    function nextRegisterStep() {
+      if (registrationStep === 1) {
+        if (!document.getElementById('r-terms').checked || !document.getElementById('r-privacy').checked) {
+          registrationError(ERR.agreements_required); return;
+        }
+      }
+      if (registrationStep === 2) {
+        const displayName = document.getElementById('r-dn').value.trim();
+        if (!displayName || displayName.length > 40) { registrationError(ERR.invalid_display_name); return; }
+      }
+      if (registrationStep === 3) {
+        if (!/^[a-zA-Z0-9_]{3,20}$/.test(document.getElementById('r-un').value.trim())) {
+          registrationError(ERR.invalid_username); return;
+        }
+      }
+      if (registrationStep < 5) setRegisterStep(registrationStep + 1);
+    }
+
+    function previousRegisterStep() {
+      if (!registrationComplete && registrationStep > 1) setRegisterStep(registrationStep - 1);
+    }
+
+    function setRegistrationEmailStatus(text, type = '') {
+      const status = document.getElementById('reg-email-status');
+      status.textContent = text;
+      status.className = 'email-status' + (type ? ` ${type}` : '');
+    }
+
+    function resetRegistrationEmailVerification() {
+      registrationEmailVerified = false;
+      registrationVerifiedEmail = '';
+      document.getElementById('reg-email-next').disabled = true;
+      setRegistrationEmailStatus('이메일을 입력했다면 인증을 완료하거나 건너뛰기를 선택해주세요.');
+    }
+
+    document.getElementById('r-em').addEventListener('input', () => {
+      const email = document.getElementById('r-em').value.trim().toLowerCase();
+      if (email !== registrationVerifiedEmail) resetRegistrationEmailVerification();
+    });
+
+    document.getElementById('reg-email-send').addEventListener('click', async () => {
+      const email = document.getElementById('r-em').value.trim().toLowerCase();
+      const button = document.getElementById('reg-email-send');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setRegistrationEmailStatus(ERR.invalid_email, 'err'); return;
+      }
+      button.disabled = true;
+      button.textContent = '발송 중…';
+      try {
+        const response = await fetch('/api/auth/register/email/send-code', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+          body: JSON.stringify({ email }),
+        });
+        const data = await response.json().catch(() => ({ error: 'server_error' }));
+        if (!data.ok) {
+          setRegistrationEmailStatus(ERR[data.error] || ERR.server_error, 'err');
+          button.disabled = false; button.textContent = '인증코드 받기'; return;
+        }
+        resetRegistrationEmailVerification();
+        document.getElementById('reg-otp-wrap').classList.add('on');
+        document.getElementById('r-email-code').value = '';
+        setRegistrationEmailStatus(`${email}로 6자리 코드를 보냈습니다. 10분 안에 입력해주세요.`, 'ok');
+        let seconds = 60;
+        clearInterval(emailCooldownTimer);
+        button.textContent = `재발송 ${seconds}초`;
+        emailCooldownTimer = setInterval(() => {
+          seconds -= 1;
+          if (seconds <= 0) {
+            clearInterval(emailCooldownTimer);
+            button.disabled = false; button.textContent = '인증코드 다시 받기';
+          } else button.textContent = `재발송 ${seconds}초`;
+        }, 1000);
+      } catch {
+        setRegistrationEmailStatus('서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.', 'err');
+        button.disabled = false; button.textContent = '인증코드 받기';
+      }
+    });
+
+    document.getElementById('reg-email-verify').addEventListener('click', async () => {
+      const email = document.getElementById('r-em').value.trim().toLowerCase();
+      const code = document.getElementById('r-email-code').value.trim();
+      const button = document.getElementById('reg-email-verify');
+      if (!/^\d{6}$/.test(code)) { setRegistrationEmailStatus('메일로 받은 6자리 숫자를 입력해주세요.', 'err'); return; }
+      button.disabled = true; button.textContent = '확인 중…';
+      try {
+        const response = await fetch('/api/auth/register/email/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+          body: JSON.stringify({ email, code }),
+        });
+        const data = await response.json().catch(() => ({ error: 'server_error' }));
+        if (!data.ok) { setRegistrationEmailStatus(ERR[data.error] || ERR.server_error, 'err'); return; }
+        registrationEmailVerified = true;
+        registrationVerifiedEmail = email;
+        document.getElementById('r-em').disabled = true;
+        document.getElementById('reg-email-send').disabled = true;
+        document.getElementById('reg-email-next').disabled = false;
+        document.getElementById('reg-otp-wrap').classList.remove('on');
+        setRegistrationEmailStatus('이메일 인증이 완료되었습니다.', 'ok');
+      } catch {
+        setRegistrationEmailStatus('서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.', 'err');
+      } finally {
+        button.disabled = false; button.textContent = '인증하기';
+      }
+    });
+
+    document.getElementById('reg-email-skip').addEventListener('click', () => {
+      document.getElementById('r-em').value = '';
+      document.getElementById('r-email-code').value = '';
+      document.getElementById('r-em').disabled = false;
+      document.getElementById('reg-otp-wrap').classList.remove('on');
+      registrationEmailVerified = false;
+      registrationVerifiedEmail = '';
+      setRegisterStep(5);
+    });
+    document.getElementById('reg-email-next').addEventListener('click', () => {
+      if (registrationEmailVerified) setRegisterStep(5);
+    });
+
     async function handleRegister(e) {
       e.preventDefault();
+      if (registrationStep !== 5 || registrationComplete) return;
+      const password = document.getElementById('r-pw').value;
+      const confirmation = document.getElementById('r-pw-confirm').value;
+      if (password.length < 6 || password.length > 128) { registrationError(ERR.invalid_password); return; }
+      if (password !== confirmation) { registrationError('비밀번호가 서로 일치하지 않습니다.'); return; }
+      const email = document.getElementById('r-em').value.trim().toLowerCase();
+      if (email && (!registrationEmailVerified || registrationVerifiedEmail !== email)) {
+        setRegisterStep(4); registrationError(ERR.email_verification_required); return;
+      }
       const btn = document.getElementById('reg-btn');
       btn.disabled = true;
       btn.innerHTML = '처리 중… ' + ARROW;
@@ -600,18 +887,35 @@
         const res  = await fetch('/api/auth/register', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
           body: JSON.stringify({
-            username:    document.getElementById('r-un').value.trim(),
+            username: document.getElementById('r-un').value.trim(),
             displayName: document.getElementById('r-dn').value.trim(),
-            email:       document.getElementById('r-em').value.trim(),
-            password:    document.getElementById('r-pw').value,
+            email,
+            password,
+            termsAccepted: document.getElementById('r-terms').checked,
+            privacyAccepted: document.getElementById('r-privacy').checked,
           }),
         });
         const data = await res.json().catch(() => ({ error: 'server_error' }));
-        if (data.ok) { showMsg('reg-msg', '계정이 만들어졌습니다! 이동 중…', 'ok'); await afterAuth(); }
-        else showMsg('reg-msg', ERR[data.error] || '알 수 없는 오류.', 'err');
-      } catch { showMsg('reg-msg', '서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.', 'err'); }
-      finally { btn.disabled = false; btn.innerHTML = '계정 만들기 ' + ARROW; }
+        if (data.ok) {
+          registrationComplete = true;
+          document.getElementById('reg-complete-name').textContent = data.user.displayName || data.user.username;
+          setRegisterStep(6);
+        } else {
+          if (data.error === 'email_verification_required') setRegisterStep(4);
+          else if (data.error === 'invalid_username' || data.error === 'already_exists') setRegisterStep(3);
+          registrationError(ERR[data.error] || '알 수 없는 오류.');
+        }
+      } catch { registrationError('서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.'); }
+      finally { btn.disabled = false; btn.innerHTML = '회원가입 완료 ' + ARROW; }
     }
+
+    document.getElementById('reg-finish-btn').addEventListener('click', async () => {
+      const button = document.getElementById('reg-finish-btn');
+      button.disabled = true; button.textContent = '이동 중…';
+      if (redirectUri) await afterAuth('reg-msg');
+      else location.href = 'https://dsgo.vercel.app';
+      button.disabled = false; button.innerHTML = 'DS-GO 시작하기 ' + ARROW;
+    });
 
     // ── 이미 로그인 상태 확인 ──────────────────────────────────────────────────
     // redirect_uri가 있으면 SSO로 바로 넘기고, 없으면(이 계정 페이지에 직접 온 경우)

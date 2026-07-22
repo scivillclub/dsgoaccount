@@ -52,6 +52,9 @@ const ALLOWED_ORIGINS = Array.from(new Set([
 const ACCOUNT_SETTINGS_ORIGIN = new URL(
   process.env.ACCOUNT_SETTINGS_ORIGIN || 'https://dsgo.vercel.app'
 ).origin;
+const ACCOUNT_ORIGIN = new URL(
+  process.env.BASE_URL || 'https://dsgoaccount.vercel.app'
+).origin;
 
 function isAllowedSSORedirect(redirectUri) {
   try {
@@ -266,6 +269,48 @@ function setRefreshCookie(res, id, remember) {
   });
 }
 
+const REGISTRATION_EMAIL_CHALLENGE_COOKIE = 'sv_reg_email_challenge';
+const REGISTRATION_EMAIL_VERIFIED_COOKIE = 'sv_reg_email_verified';
+
+function registrationCookieOptions(maxAge) {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge,
+    path: '/',
+  };
+}
+
+function registrationEmailChallengeId(challenge) {
+  return crypto.createHmac('sha256', Buffer.from(SESSION_SECRET))
+    .update(`registration-email:${challenge}`)
+    .digest('hex');
+}
+
+async function signRegistrationEmail(email) {
+  return new SignJWT({ registrationEmail: true, email })
+    .setProtectedHeader({ alg: 'HS256' })
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .sign(SESSION_SECRET);
+}
+
+async function verifyRegistrationEmail(token) {
+  try {
+    const { payload } = await jwtVerify(String(token || ''), SESSION_SECRET, { algorithms: ['HS256'] });
+    return payload.registrationEmail === true && typeof payload.email === 'string' ? payload.email : '';
+  } catch {
+    return '';
+  }
+}
+
+function clearRegistrationEmailCookies(res) {
+  const options = { path: '/' };
+  res.clearCookie(REGISTRATION_EMAIL_CHALLENGE_COOKIE, options);
+  res.clearCookie(REGISTRATION_EMAIL_VERIFIED_COOKIE, options);
+}
+
 // ── 세션 확인 미들웨어 ────────────────────────────────────────────────────────
 async function requireAuth(req, res, next) {
   const cookies = parseCookies(req);
@@ -310,19 +355,46 @@ async function getSessionVersion() {
 // API 라우트
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function requireRegistrationOrigin(req, res, next) {
+  const origin = req.get('origin');
+  const isLocal = process.env.NODE_ENV !== 'production'
+    && origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (origin !== ACCOUNT_ORIGIN && !isLocal) {
+    return res.status(403).json({ ok: false, error: 'invalid_origin' });
+  }
+  next();
+}
+
 // POST /api/auth/register
-app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { username, email, password, displayName } = req.body || {};
+app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const displayName = String(req.body?.displayName || '').trim();
+  const email = String(req.body?.email || '').trim().toLowerCase();
   if (!username || !password || !displayName)
     return res.status(400).json({ ok: false, error: 'missing_fields' });
+  if (req.body?.termsAccepted !== true || req.body?.privacyAccepted !== true)
+    return res.status(400).json({ ok: false, error: 'agreements_required' });
   if (password.length < 6 || password.length > 128)
     return res.status(400).json({ ok: false, error: 'invalid_password' });
   if (!/^[a-zA-Z0-9_]{3,20}$/.test(username))
     return res.status(400).json({ ok: false, error: 'invalid_username' });
+  if (displayName.length > 40)
+    return res.status(400).json({ ok: false, error: 'invalid_display_name' });
+  if (email && (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))
+    return res.status(400).json({ ok: false, error: 'invalid_email' });
 
   try {
+    if (email) {
+      const verifiedEmail = await verifyRegistrationEmail(
+        parseCookies(req)[REGISTRATION_EMAIL_VERIFIED_COOKIE]
+      );
+      if (verifiedEmail !== email) {
+        return res.status(409).json({ ok: false, error: 'email_verification_required' });
+      }
+    }
     const users = await getUsers();
-    if (users.find(u => u.username === username || (email && u.email === email)))
+    if (users.find(u => u.username === username || (email && String(u.email || '').toLowerCase() === email)))
       return res.status(409).json({ ok: false, error: 'already_exists' });
 
     const id = uuid();
@@ -330,6 +402,9 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const user = {
       id, username, email: email || '', displayName, nickname: displayName, name: displayName,
       role: 'pending', isBanned: false, createdAt: Date.now(),
+      termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(),
+      termsVersion: '2026-07-22', privacyVersion: '2026-07-22',
+      ...(email ? { emailVerifiedAt: Date.now() } : {}),
     };
     const creds = await getCreds();
     creds[id] = pw;
@@ -347,6 +422,7 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     ]);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshId, false);
+    clearRegistrationEmailCookies(res);
     res.json({ ok: true, user: { id, username, displayName, role: 'pending' } });
   } catch (e) {
     console.error('[register]', e);
@@ -635,6 +711,7 @@ app.patch('/api/account/profile', requireAuth, requireAccountOrigin, authLimiter
 
 // ── 이메일 소유권 인증 ──────────────────────────────────────────────────────
 const EMAIL_CODES_COL = 'emailVerificationCodes';
+const REGISTRATION_EMAIL_CODES_COL = 'registrationEmailVerificationCodes';
 const EMAIL_CODE_TTL = 10 * 60_000;
 const EMAIL_CODE_MAX_ATTEMPTS = 5;
 
@@ -644,7 +721,7 @@ function emailCodeHash(userId, email, code) {
     .digest('hex');
 }
 
-async function sendVerificationEmail(email, code) {
+async function sendVerificationEmail(email, code, source = '계정 설정') {
   const smtpPass = process.env.OUTLOOK_APP_PASSWORD;
   if (!smtpPass) throw new Error('email_not_configured');
   const transporter = nodemailer.createTransport({
@@ -656,10 +733,134 @@ async function sendVerificationEmail(email, code) {
     from: fromAddress,
     to: email,
     subject: '[Scivill] 이메일 인증 코드',
-    text: `Scivill 이메일 인증 코드는 ${code} 입니다. 이 코드는 10분 후 만료되며 한 번만 사용할 수 있습니다.`,
-    html: `<!doctype html><html lang="ko"><body style="margin:0;background:#09090b;color:#fff;font-family:Arial,sans-serif"><table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 16px"><table width="100%" style="max-width:520px;background:#141419;border:1px solid #2b2b33;border-radius:18px"><tr><td style="padding:32px"><p style="margin:0 0 8px;color:#8b8b9b;font-size:12px;font-weight:700;letter-spacing:.14em">DS-GO ACCOUNT</p><h1 style="margin:0 0 14px;font-size:24px">이메일 인증</h1><p style="margin:0 0 24px;color:#aaaaba;font-size:14px;line-height:1.7">계정 설정에서 요청한 6자리 인증 코드입니다.</p><div style="padding:24px;border:1px solid #6366f1;border-radius:14px;background:#191925;text-align:center;font-size:38px;font-weight:900;letter-spacing:.22em">${code}</div><p style="margin:24px 0 0;color:#777785;font-size:12px;line-height:1.7">10분 안에 입력해주세요. 본인이 요청하지 않았다면 이 메일을 무시하고 코드를 공유하지 마세요.</p></td></tr></table></td></tr></table></body></html>`,
+    text: `Scivill ${source} 이메일 인증 코드는 ${code} 입니다. 이 코드는 10분 후 만료되며 한 번만 사용할 수 있습니다.`,
+    html: `<!doctype html><html lang="ko"><body style="margin:0;background:#09090b;color:#fff;font-family:Arial,sans-serif"><table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:40px 16px"><table width="100%" style="max-width:520px;background:#141419;border:1px solid #2b2b33;border-radius:18px"><tr><td style="padding:32px"><p style="margin:0 0 8px;color:#8b8b9b;font-size:12px;font-weight:700;letter-spacing:.14em">DS-GO ACCOUNT</p><h1 style="margin:0 0 14px;font-size:24px">이메일 인증</h1><p style="margin:0 0 24px;color:#aaaaba;font-size:14px;line-height:1.7">${source}에서 요청한 6자리 인증 코드입니다.</p><div style="padding:24px;border:1px solid #6366f1;border-radius:14px;background:#191925;text-align:center;font-size:38px;font-weight:900;letter-spacing:.22em">${code}</div><p style="margin:24px 0 0;color:#777785;font-size:12px;line-height:1.7">10분 안에 입력해주세요. 본인이 요청하지 않았다면 이 메일을 무시하고 코드를 공유하지 마세요.</p></td></tr></table></td></tr></table></body></html>`,
   });
 }
+
+app.post('/api/auth/register/email/send-code', requireRegistrationOrigin, emailCodeLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ ok: false, error: 'invalid_email' });
+  }
+  try {
+    const users = await getUsers();
+    if (users.some(u => String(u.email || '').toLowerCase() === email)) {
+      return res.status(409).json({ ok: false, error: 'email_taken' });
+    }
+    const cookies = parseCookies(req);
+    const existingChallenge = cookies[REGISTRATION_EMAIL_CHALLENGE_COOKIE];
+    const challenge = /^[a-f0-9]{64}$/.test(existingChallenge || '')
+      ? existingChallenge : crypto.randomBytes(32).toString('hex');
+    const code = String(crypto.randomInt(100000, 1000000));
+    const ref = db.collection(REGISTRATION_EMAIL_CODES_COL).doc(registrationEmailChallengeId(challenge));
+    const now = Date.now();
+    let sendError = '';
+    await db.runTransaction(async tx => {
+      const previousSnap = await tx.get(ref);
+      const previous = previousSnap.exists ? previousSnap.data() : null;
+      if (previous && previous.createdAt > now - 60_000) {
+        sendError = 'email_code_cooldown';
+        return;
+      }
+      const inSameWindow = previous && previous.windowStartedAt > now - 10 * 60_000;
+      const sendCount = inSameWindow ? (previous.sendCount || 0) + 1 : 1;
+      if (sendCount > 5) {
+        sendError = 'too_many_email_codes';
+        return;
+      }
+      tx.set(ref, {
+        email,
+        codeHash: emailCodeHash(`registration:${challenge}`, email, code),
+        attempts: 0,
+        sendCount,
+        windowStartedAt: inSameWindow ? previous.windowStartedAt : now,
+        createdAt: now,
+        expiresAt: now + EMAIL_CODE_TTL,
+      });
+    });
+    if (sendError) return res.status(429).json({ ok: false, error: sendError });
+    res.cookie(
+      REGISTRATION_EMAIL_CHALLENGE_COOKIE,
+      challenge,
+      registrationCookieOptions(EMAIL_CODE_TTL)
+    );
+    res.clearCookie(REGISTRATION_EMAIL_VERIFIED_COOKIE, { path: '/' });
+    try {
+      await sendVerificationEmail(email, code, 'DS-GO 회원가입');
+    } catch (sendError) {
+      await ref.delete().catch(() => {});
+      throw sendError;
+    }
+    res.json({ ok: true, expiresIn: EMAIL_CODE_TTL / 1000 });
+  } catch (e) {
+    console.error('[auth/register/email/send-code]', e?.message || e);
+    const error = e?.message === 'email_not_configured' ? 'email_not_configured' : 'email_send_failed';
+    res.status(500).json({ ok: false, error });
+  }
+});
+
+app.post('/api/auth/register/email/verify', requireRegistrationOrigin, authLimiter, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  const code = String(req.body?.code || '').trim();
+  const challenge = parseCookies(req)[REGISTRATION_EMAIL_CHALLENGE_COOKIE];
+  if (!email || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ ok: false, error: 'invalid_email_code' });
+  }
+  if (!/^[a-f0-9]{64}$/.test(challenge || '')) {
+    return res.status(400).json({ ok: false, error: 'email_code_expired' });
+  }
+  try {
+    let verificationError = '';
+    const ref = db.collection(REGISTRATION_EMAIL_CODES_COL).doc(registrationEmailChallengeId(challenge));
+    await db.runTransaction(async tx => {
+      const usersRef = db.collection(SHARED_COL).doc('users');
+      const [codeSnap, usersSnap] = await Promise.all([tx.get(ref), tx.get(usersRef)]);
+      const stored = codeSnap.exists ? codeSnap.data() : null;
+      if (!stored || stored.email !== email || stored.expiresAt < Date.now()) {
+        if (codeSnap.exists) tx.delete(ref);
+        verificationError = 'email_code_expired';
+        return;
+      }
+      if ((stored.attempts || 0) >= EMAIL_CODE_MAX_ATTEMPTS) {
+        tx.delete(ref);
+        verificationError = 'too_many_email_attempts';
+        return;
+      }
+      const expected = Buffer.from(stored.codeHash, 'hex');
+      const actual = Buffer.from(emailCodeHash(`registration:${challenge}`, email, code), 'hex');
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+        const attempts = (stored.attempts || 0) + 1;
+        if (attempts >= EMAIL_CODE_MAX_ATTEMPTS) tx.delete(ref);
+        else tx.update(ref, { attempts });
+        verificationError = attempts >= EMAIL_CODE_MAX_ATTEMPTS ? 'too_many_email_attempts' : 'invalid_email_code';
+        return;
+      }
+      const users = usersSnap.exists ? (usersSnap.data()?.value ?? []) : [];
+      if (users.some(u => String(u.email || '').toLowerCase() === email)) {
+        verificationError = 'email_taken';
+        return;
+      }
+      tx.delete(ref);
+    });
+    if (verificationError) throw new Error(verificationError);
+    const proof = await signRegistrationEmail(email);
+    res.cookie(
+      REGISTRATION_EMAIL_VERIFIED_COOKIE,
+      proof,
+      registrationCookieOptions(15 * 60_000)
+    );
+    res.clearCookie(REGISTRATION_EMAIL_CHALLENGE_COOKIE, { path: '/' });
+    res.json({ ok: true, email });
+  } catch (e) {
+    const error = ['email_code_expired', 'too_many_email_attempts', 'invalid_email_code', 'email_taken'].includes(e?.message)
+      ? e.message : 'server_error';
+    const status = error === 'email_taken' ? 409 : error === 'too_many_email_attempts' ? 429
+      : error === 'server_error' ? 500 : 400;
+    if (error === 'server_error') console.error('[auth/register/email/verify]', e);
+    res.status(status).json({ ok: false, error });
+  }
+});
 
 app.post('/api/account/email/send-code', requireAuth, requireAccountOrigin, emailCodeLimiter, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase();
