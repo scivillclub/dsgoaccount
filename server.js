@@ -42,6 +42,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'https://dsgoaccount.vercel.app',
   'https://dsgo.vercel.app',
   'https://scivill.vercel.app',
+  'https://scivill-admin.vercel.app',
   'https://scivill-deepthink.vercel.app',
   'https://scivill-nodetask.vercel.app',
   'https://scivill-sheet.vercel.app',
