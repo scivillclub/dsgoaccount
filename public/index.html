@@ -603,6 +603,7 @@
     // ── SSO ──────────────────────────────────────────────────────────────────
     const params      = new URLSearchParams(location.search);
     const redirectUri = params.get('redirect_uri') || '';
+    const forceLogin  = params.get('prompt') === 'login';
     if (redirectUri) {
       try {
         const host = new URL(redirectUri).hostname;
@@ -933,7 +934,8 @@
       try {
         const r = await authFetch('/api/auth/me');
         if (!r.ok) return;
-        if (redirectUri) { await afterAuth(); return; }
+        if (redirectUri && !forceLogin) { await afterAuth(); return; }
+        if (forceLogin) return;
         const { user } = await r.json();
         document.getElementById('logged-in-name').textContent = user.displayName || user.username;
         document.getElementById('logged-in-box').classList.add('on');
