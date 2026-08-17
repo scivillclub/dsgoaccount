@@ -2,7 +2,7 @@
 <html lang="ko" data-theme="">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>ds-go 계정</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
@@ -19,7 +19,13 @@
       --brand:    #6c5ce7;
     }
 
-    html, body { height: 100%; }
+    html, body {
+      height: 100%;
+      overflow-x: hidden;
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      overscroll-behavior-x: none;
+    }
 
     body {
       display: grid;
@@ -118,6 +124,7 @@
       align-items: center;
       padding: 0 48px;
       background: var(--fp-bg);
+      touch-action: pan-y;
     }
 
     .form-box {
@@ -214,7 +221,7 @@
       border-radius: 9px;
       background: var(--fp-surf);
       color: var(--fp-fg);
-      font-size: 13.5px; font-family: inherit;
+      font-size: 16px; font-family: inherit;
       outline: none;
       transition: border-color .15s;
       -webkit-appearance: none;
@@ -333,12 +340,70 @@
 
     /* ── 반응형 ── */
     @media (max-width: 780px) {
-      body { grid-template-columns: 1fr; }
-      .brand-panel { min-height: 220px; padding: 28px 24px; justify-content: flex-end; }
-      .art-label { left: 24px; }
+      html, body { height: auto; min-height: 100svh; }
+      body {
+        display: flex;
+        flex-direction: column;
+        background: var(--fp-bg);
+      }
+      .form-panel-wrap {
+        order: 1;
+        min-height: auto;
+        padding: 24px 18px 16px;
+      }
+      .form-box {
+        max-width: 420px;
+        width: 100%;
+        margin: 0 auto;
+        padding: 10px 0 18px;
+      }
+      .brand-panel {
+        order: 2;
+        min-height: 176px;
+        margin: 0 16px 18px;
+        padding: 24px;
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 18px;
+        justify-content: flex-end;
+      }
+      .brand-logo, .brand-bottom { display: none; }
+      .art-label {
+        position: relative;
+        left: auto;
+        top: auto;
+        transform: none;
+      }
       .art-label h2 { font-size: 22px; }
-      .form-panel-wrap { padding: 36px 24px; }
-      .form-box { max-width: 420px; }
+      .art-label p { font-size: 13px; max-width: none; }
+      input[type=text], input[type=email], input[type=password] {
+        height: 44px;
+        border-radius: 12px;
+      }
+      .submit {
+        height: 44px;
+        border-radius: 12px;
+      }
+      footer {
+        position: static !important;
+        justify-content: center !important;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        padding: 12px 18px !important;
+      }
+      footer nav {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px !important;
+      }
+    }
+
+    @media (min-width: 781px) {
+      input[type=text], input[type=email], input[type=password] { font-size: 13.5px; }
+    }
+
+    @media (max-width: 420px) {
+      .brand-panel { display: none; }
     }
   </style>
 </head>
@@ -409,11 +474,11 @@
         <form onsubmit="handleLogin(event)" novalidate>
           <div class="fg">
             <label class="fl" for="l-id">아이디 / 이메일</label>
-            <input type="text" id="l-id" placeholder="아이디 또는 이메일" autocomplete="username" required />
+            <input type="text" id="l-id" name="username" placeholder="아이디 또는 이메일" autocomplete="section-dsgo-login username" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="email" required />
           </div>
           <div class="fg">
             <label class="fl" for="l-pw">비밀번호</label>
-            <input type="password" id="l-pw" placeholder="비밀번호" autocomplete="current-password" required />
+            <input type="password" id="l-pw" name="password" placeholder="비밀번호" autocomplete="section-dsgo-login current-password" required />
           </div>
           <label class="remember">
             <input type="checkbox" id="remember" />
@@ -466,7 +531,7 @@
             <div class="reg-kicker">Profile</div>
             <h2 class="reg-title">어떤 이름으로 표시할까요?</h2>
             <p class="reg-desc">모든 Scivill 서비스에서 다른 사용자에게 보이는 이름입니다.</p>
-            <div class="fg"><label class="fl" for="r-dn">표시 이름 <span class="hint">1~40자</span></label><input type="text" id="r-dn" placeholder="홍길동" autocomplete="name" maxlength="40" /></div>
+            <div class="fg"><label class="fl" for="r-dn">표시 이름 <span class="hint">1~40자</span></label><input type="text" id="r-dn" name="name" placeholder="홍길동" autocomplete="section-dsgo-register name" maxlength="40" /></div>
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
@@ -474,7 +539,7 @@
             <div class="reg-kicker">Account ID</div>
             <h2 class="reg-title">로그인 아이디를 정해주세요</h2>
             <p class="reg-desc">DS-GO 계정으로 로그인할 때 사용합니다. 가입 후 변경할 수 없습니다.</p>
-            <div class="fg"><label class="fl" for="r-un">아이디 <span class="hint">영문·숫자·_ 3~20자</span></label><input type="text" id="r-un" placeholder="아이디" autocomplete="username" maxlength="20" /></div>
+            <div class="fg"><label class="fl" for="r-un">아이디 <span class="hint">영문·숫자·_ 3~20자</span></label><input type="text" id="r-un" name="new-username" placeholder="아이디" autocomplete="section-dsgo-register username" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="20" /></div>
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
@@ -488,7 +553,7 @@
                 <input type="checkbox" id="r-email-consent" />
                 <span><b>이메일 개인정보 수집·이용 동의</b> <span style="color:var(--fp-muted)">(선택)</span><br /><a href="https://scivill.vercel.app/privacy-consent" target="_blank" rel="noopener noreferrer">수집 목적·항목·보유기간 보기</a></span>
               </label>
-              <div class="email-row"><input type="email" id="r-em" placeholder="example@email.com" autocomplete="email" /><button type="button" class="submit secondary" id="reg-email-send">인증코드 받기</button></div>
+              <div class="email-row"><input type="email" id="r-em" name="email" placeholder="example@email.com" autocomplete="section-dsgo-register email" autocapitalize="off" autocorrect="off" spellcheck="false" /><button type="button" class="submit secondary" id="reg-email-send">인증코드 받기</button></div>
               <div class="otp-wrap" id="reg-otp-wrap"><div class="email-row"><input type="text" class="otp-input" id="r-email-code" placeholder="000000" inputmode="numeric" autocomplete="one-time-code" maxlength="6" /><button type="button" class="submit" id="reg-email-verify">인증하기</button></div></div>
               <div class="email-status" id="reg-email-status">이메일 없이도 모든 서비스를 이용할 수 있습니다.</div>
             </div>
@@ -499,8 +564,8 @@
             <div class="reg-kicker">Password</div>
             <h2 class="reg-title">비밀번호를 만들어주세요</h2>
             <p class="reg-desc">동일한 비밀번호를 한 번 더 입력해 정확히 확인합니다.</p>
-            <div class="fg"><label class="fl" for="r-pw">비밀번호 <span class="hint">6~128자</span></label><input type="password" id="r-pw" placeholder="비밀번호" autocomplete="new-password" maxlength="128" /></div>
-            <div class="fg"><label class="fl" for="r-pw-confirm">비밀번호 확인</label><input type="password" id="r-pw-confirm" placeholder="비밀번호를 다시 입력" autocomplete="new-password" maxlength="128" /></div>
+            <div class="fg"><label class="fl" for="r-pw">비밀번호 <span class="hint">6~128자</span></label><input type="password" id="r-pw" name="new-password" placeholder="비밀번호" autocomplete="section-dsgo-register new-password" maxlength="128" /></div>
+            <div class="fg"><label class="fl" for="r-pw-confirm">비밀번호 확인</label><input type="password" id="r-pw-confirm" name="new-password-confirm" placeholder="비밀번호를 다시 입력" autocomplete="section-dsgo-register new-password" maxlength="128" /></div>
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="submit" class="submit" id="reg-btn">회원가입 완료 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
