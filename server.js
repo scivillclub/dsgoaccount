@@ -93,10 +93,15 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '128kb' }));
+app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
 // 인증 응답은 절대 캐시되면 안 된다 (Vercel 엣지/브라우저 캐시가 로그아웃 이전의
 // 로그인 상태 응답을 그대로 재사용하면 "로그아웃해도 다시 로그인된 것처럼 보이는" 문제가 생긴다)
 app.use('/api/auth', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+app.use('/api/oauth', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
 });
@@ -148,6 +153,12 @@ const reportLimiter = rateLimit({
 const emailCodeLimiter = rateLimit({
   windowMs: 10 * 60_000, max: 5,
   message: { ok: false, error: 'too_many_email_codes' },
+  standardHeaders: true, legacyHeaders: false,
+});
+
+const oauthTokenLimiter = rateLimit({
+  windowMs: 60_000, max: 60,
+  message: { error: 'slow_down', error_description: 'Too many OAuth requests.' },
   standardHeaders: true, legacyHeaders: false,
 });
 
@@ -386,6 +397,152 @@ async function saveCreds(creds) {
 async function getSessionVersion() {
   const s = await db.collection(SHARED_COL).doc('aiSettings').get();
   return s.exists ? (s.data()?.value?.sessionVersion ?? 0) : 0;
+}
+
+// OAuth 2.0 Authorization Code provider. Client secrets, authorization codes,
+// and access tokens are stored only as SHA-256 digests. The raw value is shown
+// or returned exactly once to the party that created it.
+const OAUTH_CLIENTS_COL = 'oauthClients';
+const OAUTH_CODES_COL = 'oauthAuthorizationCodes';
+const OAUTH_TOKENS_COL = 'oauthAccessTokens';
+const OAUTH_ALLOWED_SCOPES = new Set(['profile', 'email']);
+const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_ACCESS_TTL_MS = 60 * 60 * 1000;
+
+function oauthDigest(value) {
+  return crypto.createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
+function oauthCredential(prefix, bytes = 32) {
+  return `${prefix}_${crypto.randomBytes(bytes).toString('base64url')}`;
+}
+
+function oauthSafeEqual(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8');
+  const b = Buffer.from(String(right || ''), 'utf8');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function parseOAuthScopes(value) {
+  return Array.from(new Set(String(value || 'profile').trim().split(/\s+/).filter(Boolean)));
+}
+
+function isValidOAuthUrl(value, allowEmpty = false) {
+  if (!value && allowEmpty) return true;
+  try {
+    const url = new URL(String(value));
+    if (url.hash || !['http:', 'https:'].includes(url.protocol)) return false;
+    if (url.protocol === 'http:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(url.hostname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeOAuthAppInput(body, fallback = {}) {
+  const name = String(body?.name ?? fallback.name ?? '').trim();
+  const description = String(body?.description ?? fallback.description ?? '').trim();
+  const homepageUrl = String(body?.homepageUrl ?? fallback.homepageUrl ?? '').trim();
+  const sourceRedirects = body?.redirectUris ?? fallback.redirectUris ?? [];
+  const redirectUris = Array.from(new Set(
+    (Array.isArray(sourceRedirects) ? sourceRedirects : []).map(value => String(value).trim()).filter(Boolean)
+  ));
+
+  if (name.length < 2 || name.length > 60) return { error: 'invalid_name' };
+  if (description.length > 240) return { error: 'invalid_description' };
+  if (!isValidOAuthUrl(homepageUrl, true)) return { error: 'invalid_homepage_url' };
+  if (redirectUris.length < 1 || redirectUris.length > 10 || redirectUris.some(value => !isValidOAuthUrl(value))) {
+    return { error: 'invalid_redirect_uris' };
+  }
+  return { value: { name, description, homepageUrl, redirectUris } };
+}
+
+function publicOAuthApp(clientId, data) {
+  return {
+    clientId,
+    name: data.name,
+    description: data.description || '',
+    homepageUrl: data.homepageUrl || '',
+    redirectUris: Array.isArray(data.redirectUris) ? data.redirectUris : [],
+    createdAt: data.createdAt || 0,
+    updatedAt: data.updatedAt || data.createdAt || 0,
+    secretRotatedAt: data.secretRotatedAt || data.createdAt || 0,
+  };
+}
+
+async function getOAuthClient(clientId) {
+  if (!/^dsg_[A-Za-z0-9_-]{20,80}$/.test(String(clientId || ''))) return null;
+  const snap = await db.collection(OAUTH_CLIENTS_COL).doc(String(clientId)).get();
+  return snap.exists ? { clientId: snap.id, ...snap.data() } : null;
+}
+
+function oauthRedirect(redirectUri, params) {
+  const url = new URL(redirectUri);
+  for (const [name, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') url.searchParams.set(name, String(value));
+  }
+  return url.toString();
+}
+
+async function validateOAuthAuthorizationRequest(input) {
+  const clientId = String(input?.client_id || '');
+  const redirectUri = String(input?.redirect_uri || '');
+  const responseType = String(input?.response_type || '');
+  const state = String(input?.state || '');
+  const codeChallenge = String(input?.code_challenge || '');
+  const codeChallengeMethod = String(input?.code_challenge_method || '');
+  const scopes = parseOAuthScopes(input?.scope);
+  const client = await getOAuthClient(clientId);
+
+  if (!client) return { error: 'invalid_client', description: 'Unknown OAuth client.' };
+  if (!client.redirectUris.includes(redirectUri)) {
+    return { error: 'invalid_redirect_uri', description: 'The redirect URI is not registered for this app.' };
+  }
+
+  const safeRedirect = (error, description) => ({
+    error,
+    description,
+    redirectUrl: oauthRedirect(redirectUri, { error, error_description: description, state }),
+  });
+  if (responseType !== 'code') return safeRedirect('unsupported_response_type', 'Only response_type=code is supported.');
+  if (!state || state.length > 1024) return safeRedirect('invalid_request', 'A valid state parameter is required.');
+  if (scopes.length < 1 || scopes.some(scope => !OAUTH_ALLOWED_SCOPES.has(scope))) {
+    return safeRedirect('invalid_scope', 'Only the profile and email scopes are supported.');
+  }
+  if (codeChallenge) {
+    if (codeChallengeMethod !== 'S256' || !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge)) {
+      return safeRedirect('invalid_request', 'PKCE must use a valid S256 code challenge.');
+    }
+  } else if (codeChallengeMethod) {
+    return safeRedirect('invalid_request', 'code_challenge is required when code_challenge_method is provided.');
+  }
+
+  return { client, clientId, redirectUri, state, scopes, codeChallenge };
+}
+
+function readOAuthClientCredentials(req) {
+  const authorization = String(req.get('authorization') || '');
+  if (authorization.startsWith('Basic ')) {
+    try {
+      const decoded = Buffer.from(authorization.slice(6), 'base64').toString('utf8');
+      const separator = decoded.indexOf(':');
+      if (separator > 0) {
+        return { clientId: decoded.slice(0, separator), clientSecret: decoded.slice(separator + 1) };
+      }
+    } catch {
+      // Fall through to form credentials.
+    }
+  }
+  return {
+    clientId: String(req.body?.client_id || ''),
+    clientSecret: String(req.body?.client_secret || ''),
+  };
+}
+
+function sendOAuthError(res, status, error, description) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  return res.status(status).json({ error, error_description: description });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -714,6 +871,108 @@ app.get('/api/account/profile', requireAccountAuth, async (req, res) => {
     res.json({ ok: true, profile: publicAccountProfile(account.user, account.hasPassword) });
   } catch (e) {
     console.error('[account/profile:get]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+// Developer portal: OAuth app registration and secret lifecycle.
+app.get('/api/account/oauth/apps', requireAccountAuth, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const snapshot = await db.collection(OAUTH_CLIENTS_COL)
+      .where('ownerUserId', '==', account.user.id).limit(50).get();
+    const apps = snapshot.docs
+      .map(doc => publicOAuthApp(doc.id, doc.data()))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    res.json({ ok: true, apps });
+  } catch (e) {
+    console.error('[oauth/apps:list]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.post('/api/account/oauth/apps', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  const parsed = normalizeOAuthAppInput(req.body);
+  if (parsed.error) return res.status(400).json({ ok: false, error: parsed.error });
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const existing = await db.collection(OAUTH_CLIENTS_COL)
+      .where('ownerUserId', '==', account.user.id).limit(21).get();
+    if (existing.size >= 20) return res.status(409).json({ ok: false, error: 'app_limit_reached' });
+
+    const clientId = oauthCredential('dsg', 18);
+    const clientSecret = oauthCredential('dsgs');
+    const now = Date.now();
+    const data = {
+      ...parsed.value,
+      ownerUserId: account.user.id,
+      clientSecretDigest: oauthDigest(clientSecret),
+      createdAt: now,
+      updatedAt: now,
+      secretRotatedAt: now,
+    };
+    await db.collection(OAUTH_CLIENTS_COL).doc(clientId).create(data);
+    res.status(201).json({ ok: true, app: publicOAuthApp(clientId, data), clientSecret });
+  } catch (e) {
+    console.error('[oauth/apps:create]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.patch('/api/account/oauth/apps/:clientId', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const ref = db.collection(OAUTH_CLIENTS_COL).doc(String(req.params.clientId));
+    const snap = await ref.get();
+    if (!snap.exists || snap.data()?.ownerUserId !== account.user.id) {
+      return res.status(404).json({ ok: false, error: 'app_not_found' });
+    }
+    const parsed = normalizeOAuthAppInput(req.body, snap.data());
+    if (parsed.error) return res.status(400).json({ ok: false, error: parsed.error });
+    const updatedAt = Date.now();
+    await ref.update({ ...parsed.value, updatedAt });
+    res.json({ ok: true, app: publicOAuthApp(ref.id, { ...snap.data(), ...parsed.value, updatedAt }) });
+  } catch (e) {
+    console.error('[oauth/apps:update]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.post('/api/account/oauth/apps/:clientId/secret', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const ref = db.collection(OAUTH_CLIENTS_COL).doc(String(req.params.clientId));
+    const snap = await ref.get();
+    if (!snap.exists || snap.data()?.ownerUserId !== account.user.id) {
+      return res.status(404).json({ ok: false, error: 'app_not_found' });
+    }
+    const clientSecret = oauthCredential('dsgs');
+    const now = Date.now();
+    await ref.update({ clientSecretDigest: oauthDigest(clientSecret), secretRotatedAt: now, updatedAt: now });
+    res.json({ ok: true, clientSecret, secretRotatedAt: now });
+  } catch (e) {
+    console.error('[oauth/apps:rotate-secret]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.delete('/api/account/oauth/apps/:clientId', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const ref = db.collection(OAUTH_CLIENTS_COL).doc(String(req.params.clientId));
+    const snap = await ref.get();
+    if (!snap.exists || snap.data()?.ownerUserId !== account.user.id) {
+      return res.status(404).json({ ok: false, error: 'app_not_found' });
+    }
+    await ref.delete();
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[oauth/apps:delete]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
 });
@@ -1483,6 +1742,213 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
 });
 
 // ── 정적 페이지 폴백 ─────────────────────────────────────────────────────────
+// OAuth authorization requests are rendered on dsgo.vercel.app. These two
+// authenticated endpoints let that first-party UI validate and complete the
+// request without exposing account-server cookies to the portal origin.
+app.get('/api/oauth/authorize/context', requireAccountAuth, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const validated = await validateOAuthAuthorizationRequest(req.query);
+    if (validated.error) {
+      return res.status(400).json({
+        ok: false,
+        error: validated.error,
+        errorDescription: validated.description,
+        redirectUrl: validated.redirectUrl,
+      });
+    }
+    res.json({
+      ok: true,
+      app: {
+        clientId: validated.clientId,
+        name: validated.client.name,
+        description: validated.client.description || '',
+        homepageUrl: validated.client.homepageUrl || '',
+      },
+      user: {
+        displayName: account.user.displayName || account.user.nickname || account.user.name || account.user.username || '',
+        username: account.user.username || '',
+        email: account.user.email || '',
+      },
+      scopes: validated.scopes,
+    });
+  } catch (e) {
+    console.error('[oauth/authorize:context]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.post('/api/oauth/authorize', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const validated = await validateOAuthAuthorizationRequest(req.body);
+    if (validated.error) {
+      return res.status(400).json({
+        ok: false,
+        error: validated.error,
+        errorDescription: validated.description,
+        redirectUrl: validated.redirectUrl,
+      });
+    }
+    if (req.body?.decision !== 'allow') {
+      return res.json({
+        ok: true,
+        redirectUrl: oauthRedirect(validated.redirectUri, {
+          error: 'access_denied',
+          error_description: 'The resource owner denied the request.',
+          state: validated.state,
+        }),
+      });
+    }
+
+    const code = oauthCredential('dsgc');
+    const now = Date.now();
+    await db.collection(OAUTH_CODES_COL).doc(oauthDigest(code)).create({
+      clientId: validated.clientId,
+      userId: account.user.id,
+      redirectUri: validated.redirectUri,
+      scopes: validated.scopes,
+      codeChallenge: validated.codeChallenge || '',
+      createdAt: now,
+      expiresAt: now + OAUTH_CODE_TTL_MS,
+    });
+    res.json({
+      ok: true,
+      redirectUrl: oauthRedirect(validated.redirectUri, { code, state: validated.state }),
+    });
+  } catch (e) {
+    console.error('[oauth/authorize:complete]', e);
+    res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
+
+app.post('/api/oauth/token', oauthTokenLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  if (String(req.body?.grant_type || '') !== 'authorization_code') {
+    return sendOAuthError(res, 400, 'unsupported_grant_type', 'Only authorization_code is supported.');
+  }
+
+  const { clientId, clientSecret } = readOAuthClientCredentials(req);
+  const client = await getOAuthClient(clientId).catch(() => null);
+  if (!client || !clientSecret || !oauthSafeEqual(oauthDigest(clientSecret), client.clientSecretDigest)) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="DS-GO OAuth"');
+    return sendOAuthError(res, 401, 'invalid_client', 'Client authentication failed.');
+  }
+
+  const code = String(req.body?.code || '');
+  const redirectUri = String(req.body?.redirect_uri || '');
+  const codeVerifier = String(req.body?.code_verifier || '');
+  if (!code || !redirectUri) return sendOAuthError(res, 400, 'invalid_request', 'code and redirect_uri are required.');
+
+  let authorization;
+  try {
+    const ref = db.collection(OAUTH_CODES_COL).doc(oauthDigest(code));
+    await db.runTransaction(async tx => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new Error('invalid_grant');
+      const value = snap.data();
+      if (value.expiresAt < Date.now() || value.clientId !== clientId || value.redirectUri !== redirectUri) {
+        throw new Error('invalid_grant');
+      }
+      if (value.codeChallenge) {
+        if (!/^[A-Za-z0-9._~-]{43,128}$/.test(codeVerifier)) throw new Error('invalid_code_verifier');
+        const challenge = crypto.createHash('sha256').update(codeVerifier, 'ascii').digest('base64url');
+        if (!oauthSafeEqual(challenge, value.codeChallenge)) throw new Error('invalid_code_verifier');
+      }
+      authorization = value;
+      tx.delete(ref);
+    });
+  } catch (e) {
+    const description = e?.message === 'invalid_code_verifier'
+      ? 'PKCE code verification failed.' : 'The authorization code is invalid, expired, or already used.';
+    return sendOAuthError(res, 400, 'invalid_grant', description);
+  }
+
+  try {
+    const users = await getUsers();
+    const user = users.find(item => item.id === authorization.userId);
+    if (!user || user.isBanned) return sendOAuthError(res, 400, 'invalid_grant', 'The resource owner is unavailable.');
+
+    const accessToken = oauthCredential('dsga');
+    const now = Date.now();
+    await db.collection(OAUTH_TOKENS_COL).doc(oauthDigest(accessToken)).create({
+      clientId,
+      userId: user.id,
+      scopes: authorization.scopes,
+      createdAt: now,
+      expiresAt: now + OAUTH_ACCESS_TTL_MS,
+    });
+    res.json({
+      access_token: accessToken,
+      token_type: 'Bearer',
+      expires_in: Math.floor(OAUTH_ACCESS_TTL_MS / 1000),
+      scope: authorization.scopes.join(' '),
+    });
+  } catch (e) {
+    console.error('[oauth/token]', e);
+    return sendOAuthError(res, 500, 'server_error', 'The token could not be issued.');
+  }
+});
+
+app.get('/api/oauth/userinfo', oauthTokenLimiter, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const authorization = String(req.get('authorization') || '');
+  const accessToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  const fail = () => {
+    res.setHeader('WWW-Authenticate', 'Bearer error="invalid_token"');
+    return sendOAuthError(res, 401, 'invalid_token', 'The access token is invalid or expired.');
+  };
+  if (!accessToken) return fail();
+
+  try {
+    const tokenRef = db.collection(OAUTH_TOKENS_COL).doc(oauthDigest(accessToken));
+    const tokenSnap = await tokenRef.get();
+    if (!tokenSnap.exists) return fail();
+    const token = tokenSnap.data();
+    if (token.expiresAt < Date.now()) {
+      await tokenRef.delete().catch(() => {});
+      return fail();
+    }
+    const [client, users] = await Promise.all([getOAuthClient(token.clientId), getUsers()]);
+    const user = users.find(item => item.id === token.userId);
+    if (!client || !user || user.isBanned) return fail();
+
+    const scopes = new Set(Array.isArray(token.scopes) ? token.scopes : []);
+    const result = { sub: user.id };
+    if (scopes.has('profile')) {
+      result.name = user.displayName || user.nickname || user.name || user.username || '';
+      result.preferred_username = user.username || '';
+    }
+    if (scopes.has('email')) {
+      result.email = user.email || '';
+      result.email_verified = !!user.email && !!user.emailVerifiedAt;
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('[oauth/userinfo]', e);
+    return sendOAuthError(res, 500, 'server_error', 'User information could not be loaded.');
+  }
+});
+
+app.post('/api/oauth/revoke', oauthTokenLimiter, async (req, res) => {
+  const { clientId, clientSecret } = readOAuthClientCredentials(req);
+  const client = await getOAuthClient(clientId).catch(() => null);
+  if (!client || !clientSecret || !oauthSafeEqual(oauthDigest(clientSecret), client.clientSecretDigest)) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="DS-GO OAuth"');
+    return sendOAuthError(res, 401, 'invalid_client', 'Client authentication failed.');
+  }
+  const token = String(req.body?.token || '');
+  if (token) {
+    const ref = db.collection(OAUTH_TOKENS_COL).doc(oauthDigest(token));
+    const snap = await ref.get().catch(() => null);
+    if (snap?.exists && snap.data()?.clientId === clientId) await ref.delete().catch(() => {});
+  }
+  res.status(200).end();
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(PUB, 'index.html'));
 });

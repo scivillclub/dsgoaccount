@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# dsgoaccount
+
+DS-GO의 계정, SSO, OAuth 2.0 자격 증명을 관리하는 서버입니다. OAuth Client secret, authorization code, access token은 Firestore에 SHA-256 digest만 저장하며, callback URL은 앱에 등록된 값과 완전히 일치해야 합니다.
 
 ## Getting Started
 
