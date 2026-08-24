@@ -21,6 +21,11 @@ const db = admin.firestore();
 // using a separate `shared` collection here created duplicate identities and
 // made existing administrator credentials impossible to use through SSO.
 const SHARED_COL = process.env.ACCOUNTS_COLLECTION || 'scivill2';
+const VISITOR_ROLE = 'visitor';
+
+function normalizeUserRole(role) {
+  return role === 'pending' || !role ? VISITOR_ROLE : role;
+}
 
 // ── 설정 ─────────────────────────────────────────────────────────────────────
 const app  = express();
@@ -382,7 +387,8 @@ function hashPw(password, userId) {
 // ── DB 헬퍼 ──────────────────────────────────────────────────────────────────
 async function getUsers()  {
   const s = await db.collection(SHARED_COL).doc('users').get();
-  return s.exists ? (s.data()?.value ?? []) : [];
+  const users = s.exists ? (s.data()?.value ?? []) : [];
+  return users.map(user => ({ ...user, role: normalizeUserRole(user?.role) }));
 }
 async function getCreds()  {
   const s = await db.collection(SHARED_COL).doc('creds').get();
@@ -595,7 +601,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     const pw = await hashPw(password, id);
     const user = {
       id, username, email: email || '', displayName, nickname: displayName, name: displayName,
-      role: 'pending', isBanned: false, createdAt: Date.now(),
+      role: VISITOR_ROLE, isBanned: false, createdAt: Date.now(),
       termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(),
       termsVersion: '2026-07-22', privacyVersion: '2026-07-22',
       ...(email ? { emailVerifiedAt: Date.now(), emailConsentAt: Date.now() } : {}),
@@ -610,14 +616,14 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
     const [accessToken] = await Promise.all([
-      signAccess({ userId: id, role: 'pending', sessionVersion: sv, authVersion: 0, remember: false }),
-      storeRefresh(refreshId, { userId: id, role: 'pending', remember: false, authVersion: 0,
+      signAccess({ userId: id, role: VISITOR_ROLE, sessionVersion: sv, authVersion: 0, remember: false }),
+      storeRefresh(refreshId, { userId: id, role: VISITOR_ROLE, remember: false, authVersion: 0,
         sessionVersion: sv, expiresAt: Date.now() + REFRESH_TTL_SHORT * 1000 }),
     ]);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshId, false);
     clearRegistrationEmailCookies(res);
-    res.json({ ok: true, user: { id, username, displayName, role: 'pending' } });
+    res.json({ ok: true, user: { id, username, displayName, role: VISITOR_ROLE } });
   } catch (e) {
     console.error('[register]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -1812,7 +1818,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
           displayName,
           nickname: displayName,
           name: displayName,
-          role: 'pending',
+          role: VISITOR_ROLE,
           isBanned: false,
           createdAt: Date.now(),
           bytenodeId: bnId,
