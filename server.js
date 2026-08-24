@@ -864,6 +864,23 @@ function publicAccountProfile(user, hasPassword) {
   };
 }
 
+async function commitAccountDeletionWrites(deleteRefs, updateRefs) {
+  const operations = [
+    ...Array.from(deleteRefs.values()).map(ref => ({ type: 'delete', ref })),
+    ...Array.from(updateRefs.entries())
+      .filter(([path]) => !deleteRefs.has(path))
+      .map(([, value]) => ({ type: 'update', ...value })),
+  ];
+  for (let index = 0; index < operations.length; index += 400) {
+    const batch = db.batch();
+    for (const operation of operations.slice(index, index + 400)) {
+      if (operation.type === 'delete') batch.delete(operation.ref);
+      else batch.update(operation.ref, operation.data);
+    }
+    await batch.commit();
+  }
+}
+
 app.get('/api/account/profile', requireAccountAuth, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
@@ -1004,6 +1021,102 @@ app.patch('/api/account/profile', requireAccountAuth, requireAccountOrigin, auth
     const error = e?.message === 'email_verification_required' ? 'email_verification_required'
       : e?.message === 'invalid_session' ? 'invalid_session' : 'server_error';
     res.status(error === 'server_error' ? 500 : error === 'email_verification_required' ? 409 : 401).json({ ok: false, error });
+  }
+});
+
+app.delete('/api/account/profile', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const confirmation = String(req.body?.confirmation || '').trim();
+  if (confirmation !== 'scivill') {
+    return res.status(400).json({ ok: false, error: 'invalid_delete_confirmation' });
+  }
+  if (!username || !password) {
+    return res.status(400).json({ ok: false, error: 'invalid_delete_credentials' });
+  }
+
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    if (!account.hasPassword) return res.status(409).json({ ok: false, error: 'local_credentials_required' });
+    if (username.toLowerCase() !== String(account.user.username || '').toLowerCase()) {
+      return res.status(403).json({ ok: false, error: 'invalid_delete_credentials' });
+    }
+
+    const credsBefore = await getCreds();
+    const storedCredential = String(credsBefore[account.user.id] || '');
+    const suppliedCredential = await hashPw(password, account.user.id);
+    const left = Buffer.from(suppliedCredential);
+    const right = Buffer.from(storedCredential);
+    if (!storedCredential || left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+      return res.status(403).json({ ok: false, error: 'invalid_delete_credentials' });
+    }
+
+    const userId = account.user.id;
+    const accountUsername = String(account.user.username || '');
+    const accountDisplayName = String(account.user.displayName || account.user.nickname || account.user.name || '');
+    const [ownedApps, refreshTokens, userCodes, userTokens, emailCode, receivedMessages,
+      sentMessages, submittedReports, handledReports, usernameReports, displayNameReports] = await Promise.all([
+      db.collection(OAUTH_CLIENTS_COL).where('ownerUserId', '==', userId).get(),
+      db.collection('refreshTokens').where('userId', '==', userId).get(),
+      db.collection(OAUTH_CODES_COL).where('userId', '==', userId).get(),
+      db.collection(OAUTH_TOKENS_COL).where('userId', '==', userId).get(),
+      db.collection(EMAIL_CODES_COL).doc(userId).get(),
+      db.collection(MESSAGES_COL).where('recipientId', '==', userId).get(),
+      db.collection(MESSAGES_COL).where('senderId', '==', userId).get(),
+      db.collection(REPORTS_COL).where('reporterId', '==', userId).get(),
+      db.collection(REPORTS_COL).where('handledBy', '==', userId).get(),
+      accountUsername ? db.collection(REPORTS_COL).where('targetUsername', '==', accountUsername).get() : Promise.resolve(null),
+      accountDisplayName ? db.collection(REPORTS_COL).where('targetDisplayName', '==', accountDisplayName).get() : Promise.resolve(null),
+    ]);
+
+    const clientIds = ownedApps.docs.map(doc => doc.id);
+    const [clientCodes, clientTokens] = clientIds.length ? await Promise.all([
+      db.collection(OAUTH_CODES_COL).where('clientId', 'in', clientIds).get(),
+      db.collection(OAUTH_TOKENS_COL).where('clientId', 'in', clientIds).get(),
+    ]) : [null, null];
+
+    const deleteRefs = new Map();
+    const updateRefs = new Map();
+    const queueDelete = ref => deleteRefs.set(ref.path, ref);
+    const queueUpdate = (ref, data) => {
+      const current = updateRefs.get(ref.path);
+      updateRefs.set(ref.path, { ref, data: { ...(current?.data || {}), ...data } });
+    };
+    for (const snapshot of [ownedApps, refreshTokens, userCodes, userTokens, receivedMessages,
+      submittedReports, clientCodes, clientTokens]) {
+      if (snapshot) snapshot.docs.forEach(doc => queueDelete(doc.ref));
+    }
+    if (emailCode.exists) queueDelete(emailCode.ref);
+    sentMessages.docs.forEach(doc => queueUpdate(doc.ref, {
+      senderId: '', senderDisplayName: '탈퇴한 사용자', senderDeletedAt: Date.now(),
+    }));
+    handledReports.docs.forEach(doc => queueUpdate(doc.ref, { handledBy: '' }));
+    if (usernameReports) usernameReports.docs.forEach(doc => queueUpdate(doc.ref, { targetUsername: '탈퇴한 사용자' }));
+    if (displayNameReports) displayNameReports.docs.forEach(doc => queueUpdate(doc.ref, { targetDisplayName: '탈퇴한 사용자' }));
+    await commitAccountDeletionWrites(deleteRefs, updateRefs);
+
+    await db.runTransaction(async tx => {
+      const usersRef = db.collection(SHARED_COL).doc('users');
+      const credsRef = db.collection(SHARED_COL).doc('creds');
+      const [usersSnap, credsSnap] = await Promise.all([tx.get(usersRef), tx.get(credsRef)]);
+      const users = usersSnap.exists ? (usersSnap.data()?.value ?? []) : [];
+      const creds = credsSnap.exists ? (credsSnap.data()?.value ?? {}) : {};
+      const index = users.findIndex(user => user.id === userId);
+      if (index < 0 || String(creds[userId] || '') !== storedCredential) throw new Error('account_changed');
+      users.splice(index, 1);
+      delete creds[userId];
+      tx.set(usersRef, { value: users });
+      tx.set(credsRef, { value: creds });
+    });
+
+    res.clearCookie('sv_access', { path: '/' });
+    res.clearCookie('sv_refresh', { path: '/' });
+    res.json({ ok: true });
+  } catch (error) {
+    const code = error?.message === 'account_changed' ? 'account_changed' : 'server_error';
+    if (code === 'server_error') console.error('[account/profile:delete]', error);
+    res.status(code === 'account_changed' ? 409 : 500).json({ ok: false, error: code });
   }
 });
 
