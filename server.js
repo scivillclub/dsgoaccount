@@ -5,7 +5,6 @@ const express     = require('express');
 const path        = require('path');
 const crypto      = require('crypto');
 const bcrypt      = require('bcryptjs');
-const { v4: uuid } = require('uuid');
 const helmet      = require('helmet');
 const rateLimit   = require('express-rate-limit');
 const cors        = require('cors');
@@ -135,6 +134,13 @@ function bytenodeCallbackUrl() {
   return new URL('/api/auth/bytenode/callback', process.env.BASE_URL || 'https://dsgoaccount.vercel.app').toString();
 }
 
+function oryaCallbackUrl() {
+  return new URL(
+    process.env.ORYA_CALLBACK_URL || '/api/auth/orya/callback',
+    process.env.BASE_URL || 'https://dsgoaccount.vercel.app'
+  ).toString();
+}
+
 // ── Rate Limiter ──────────────────────────────────────────────────────────────
 const authLimiter = rateLimit({
   windowMs: 60_000, max: 10,
@@ -207,8 +213,27 @@ async function verifySSO(token, audience) {
   } catch { return null; }
 }
 
-async function signOAuthState({ redirectUri = '', mode = 'login', linkUserId = '' }) {
-  return new SignJWT({ redirectUri, mode, linkUserId, oauthState: true })
+async function signOAuthState({
+  redirectUri = '',
+  mode = 'login',
+  linkUserId = '',
+  provider = 'bytenode',
+  providerState = '',
+  termsAccepted = false,
+  privacyAccepted = false,
+  ageConfirmed = false,
+}) {
+  return new SignJWT({
+    redirectUri,
+    mode,
+    linkUserId,
+    provider,
+    providerState,
+    termsAccepted,
+    privacyAccepted,
+    ageConfirmed,
+    oauthState: true,
+  })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('10m')
@@ -223,24 +248,47 @@ async function verifyOAuthState(token) {
       redirectUri: typeof payload.redirectUri === 'string' ? payload.redirectUri : '',
       mode: ['register', 'link'].includes(payload.mode) ? payload.mode : 'login',
       linkUserId: typeof payload.linkUserId === 'string' ? payload.linkUserId : '',
+      provider: typeof payload.provider === 'string' ? payload.provider : '',
+      providerState: typeof payload.providerState === 'string' ? payload.providerState : '',
+      termsAccepted: payload.termsAccepted === true,
+      privacyAccepted: payload.privacyAccepted === true,
+      ageConfirmed: payload.ageConfirmed === true,
     };
   } catch {
     return null;
   }
 }
 
-function setOAuthStateCookie(res, state) {
-  res.cookie('sv_oauth_state', state, {
+function oauthStateCookie(provider) {
+  const safeProvider = provider === 'orya' ? 'orya' : 'bytenode';
+  return {
+    name: `sv_oauth_state_${safeProvider}`,
+    path: `/api/auth/${safeProvider}/callback`,
+  };
+}
+
+function setOAuthStateCookie(res, provider, state, maxAge = 10 * 60 * 1000) {
+  const cookie = oauthStateCookie(provider);
+  res.cookie(cookie.name, state, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    maxAge: 10 * 60 * 1000,
-    path: '/api/auth/bytenode/callback',
+    maxAge,
+    path: cookie.path,
   });
 }
 
-function hasMatchingOAuthState(req, state) {
-  const stored = parseCookies(req).sv_oauth_state;
+function clearOAuthStateCookie(res, provider) {
+  const cookie = oauthStateCookie(provider);
+  res.clearCookie(cookie.name, { path: cookie.path });
+}
+
+function getOAuthStateCookie(req, provider) {
+  return parseCookies(req)[oauthStateCookie(provider).name] || '';
+}
+
+function hasMatchingOAuthState(req, provider, state) {
+  const stored = getOAuthStateCookie(req, provider);
   if (!stored || !state) return false;
   const left = Buffer.from(stored);
   const right = Buffer.from(String(state));
@@ -345,7 +393,8 @@ async function requireAuth(req, res, next) {
 async function requireAccountAuth(req, res, next) {
   const authorization = req.get('authorization') || '';
   const headerToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
-  const queryToken = req.method === 'GET' && req.path === '/api/account/bytenode/link'
+  const queryToken = req.method === 'GET'
+    && ['/api/account/bytenode/link', '/api/account/orya/link'].includes(req.path)
     ? String(req.query.proxy_token || '') : '';
   const token = headerToken || queryToken;
   if (!token) return requireAuth(req, res, next);
@@ -573,7 +622,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
   const email = String(req.body?.email || '').trim().toLowerCase();
   if (!username || !password || !displayName)
     return res.status(400).json({ ok: false, error: 'missing_fields' });
-  if (req.body?.termsAccepted !== true || req.body?.privacyAccepted !== true)
+  if (req.body?.termsAccepted !== true || req.body?.privacyAccepted !== true || req.body?.ageConfirmed !== true)
     return res.status(400).json({ ok: false, error: 'agreements_required' });
   if (password.length < 6 || password.length > 128)
     return res.status(400).json({ ok: false, error: 'invalid_password' });
@@ -597,13 +646,13 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     if (users.find(u => u.username === username || (email && String(u.email || '').toLowerCase() === email)))
       return res.status(409).json({ ok: false, error: 'already_exists' });
 
-    const id = uuid();
+    const id = crypto.randomUUID();
     const pw = await hashPw(password, id);
     const user = {
       id, username, email: email || '', displayName, nickname: displayName, name: displayName,
       role: VISITOR_ROLE, isBanned: false, createdAt: Date.now(),
-      termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(),
-      termsVersion: '2026-07-22', privacyVersion: '2026-07-22',
+      termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(), ageConfirmedAt: Date.now(),
+      termsVersion: '2026-08-27', privacyVersion: '2026-08-27',
       ...(email ? { emailVerifiedAt: Date.now(), emailConsentAt: Date.now() } : {}),
     };
     const creds = await getCreds();
@@ -856,6 +905,8 @@ async function loadCurrentAccount(req) {
 }
 
 function publicAccountProfile(user, hasPassword) {
+  const hasBytenode = !!user.bytenodeId;
+  const hasOrya = !!user.oryaId;
   return {
     id: user.id,
     username: user.username || '',
@@ -865,8 +916,9 @@ function publicAccountProfile(user, hasPassword) {
     emailVerifiedAt: user.emailVerifiedAt || null,
     role: user.role || 'user',
     hasPassword,
-    hasBytenode: !!user.bytenodeId,
-    needsLocalCredentials: !!user.bytenodeId && !hasPassword,
+    hasBytenode,
+    hasOrya,
+    needsLocalCredentials: (hasBytenode || hasOrya) && !hasPassword,
   };
 }
 
@@ -1471,7 +1523,9 @@ app.post('/api/account/bytenode/unlink', requireAccountAuth, requireAccountOrigi
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
-    if (!account.hasPassword) return res.status(409).json({ ok: false, error: 'local_credentials_required' });
+    if (!account.hasPassword && !account.user.oryaId) {
+      return res.status(409).json({ ok: false, error: 'local_credentials_required' });
+    }
     let updated;
     await db.runTransaction(async tx => {
       const ref = db.collection(SHARED_COL).doc('users');
@@ -1484,7 +1538,32 @@ app.post('/api/account/bytenode/unlink', requireAccountAuth, requireAccountOrigi
       users[index] = updated;
       tx.set(ref, { value: users });
     });
-    res.json({ ok: true, profile: publicAccountProfile(updated, true) });
+    res.json({ ok: true, profile: publicAccountProfile(updated, account.hasPassword) });
+  } catch (e) {
+    res.status(e?.message === 'invalid_session' ? 401 : 500).json({ ok: false, error: e?.message || 'server_error' });
+  }
+});
+
+app.post('/api/account/orya/unlink', requireAccountAuth, requireAccountOrigin, authLimiter, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    if (!account.hasPassword && !account.user.bytenodeId) {
+      return res.status(409).json({ ok: false, error: 'local_credentials_required' });
+    }
+    let updated;
+    await db.runTransaction(async tx => {
+      const ref = db.collection(SHARED_COL).doc('users');
+      const snap = await tx.get(ref);
+      const users = snap.exists ? (snap.data()?.value ?? []) : [];
+      const index = users.findIndex(u => u.id === req.session.userId);
+      if (index < 0) throw new Error('invalid_session');
+      updated = { ...users[index] };
+      delete updated.oryaId;
+      users[index] = updated;
+      tx.set(ref, { value: users });
+    });
+    res.json({ ok: true, profile: publicAccountProfile(updated, account.hasPassword) });
   } catch (e) {
     res.status(e?.message === 'invalid_session' ? 401 : 500).json({ ok: false, error: e?.message || 'server_error' });
   }
@@ -1701,8 +1780,8 @@ app.get('/api/account/bytenode/link', requireAccountAuth, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/api/auth/login?return_to=%2Fsettings`);
-    const state = await signOAuthState({ mode: 'link', linkUserId: account.user.id });
-    setOAuthStateCookie(res, state);
+    const state = await signOAuthState({ mode: 'link', linkUserId: account.user.id, provider: 'bytenode' });
+    setOAuthStateCookie(res, 'bytenode', state);
     const redirectUri = bytenodeCallbackUrl();
     const url = new URL(BYTENODE_AUTH_URL);
     url.searchParams.set('response_type', 'code');
@@ -1723,6 +1802,291 @@ const BYTENODE_CLIENT_SECRET = process.env.BYTENODE_CLIENT_SECRET;
 const BYTENODE_AUTH_URL      = 'https://bytenode-account.vercel.app/authorize';
 const BYTENODE_TOKEN_URL     = 'https://bytenode-account.vercel.app/token';
 const BYTENODE_USERINFO_URL  = 'https://bytenode-account.vercel.app/userinfo';
+const ORYA_SERVICE_KEY       = process.env.ORYA_SERVICE_KEY;
+const ORYA_SERVICE_SECRET    = process.env.ORYA_SERVICE_SECRET;
+const ORYA_API_URL           = 'https://api.orya.ng';
+
+function normalizedProviderEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
+}
+
+function externalOAuthUsername(users, prefix, externalId) {
+  const base = `${prefix}_${oauthDigest(externalId).slice(0, 16)}`;
+  const used = new Set(users.map(user => String(user.username || '').toLowerCase()));
+  if (!used.has(base)) return base;
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const tail = `_${suffix}`;
+    const candidate = `${base.slice(0, 20 - tail.length)}${tail}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error('username_generation_failed');
+}
+
+async function oryaPost(endpoint, payload) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(`${ORYA_API_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+      redirect: 'error',
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => null);
+    return { response, data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function startOryaAuthorization(res, stateClaims) {
+  const callbackUrl = oryaCallbackUrl();
+  const { response, data } = await oryaPost('/api/oauth', {
+    service_key: ORYA_SERVICE_KEY,
+    service_secret: ORYA_SERVICE_SECRET,
+    callback_url: callbackUrl,
+  });
+  if (!response.ok || typeof data?.redirect_url !== 'string') {
+    throw new Error('orya_authorization_failed');
+  }
+
+  const redirectUrl = new URL(data.redirect_url);
+  const providerState = redirectUrl.searchParams.get('state') || '';
+  if (redirectUrl.origin !== 'https://orya.ng'
+    || redirectUrl.pathname !== '/oauth/authorize'
+    || !providerState
+    || providerState.length > 2048) {
+    throw new Error('orya_invalid_authorization_response');
+  }
+
+  const localState = await signOAuthState({
+    ...stateClaims,
+    provider: 'orya',
+    providerState,
+  });
+  setOAuthStateCookie(res, 'orya', localState, 5 * 60 * 1000);
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  return res.redirect(redirectUrl.toString());
+}
+
+async function resolveOryaUser({ mode, linkUserId, profile, termsAccepted, privacyAccepted, ageConfirmed }) {
+  const oryaId = String(profile?.id || '').trim();
+  if (!oryaId || oryaId.length > 200) throw new Error('orya_invalid_profile');
+  const email = normalizedProviderEmail(profile?.email);
+  const displayName = String(profile?.name || '').trim().slice(0, 40);
+  let resolvedUser;
+
+  await db.runTransaction(async tx => {
+    const ref = db.collection(SHARED_COL).doc('users');
+    const snap = await tx.get(ref);
+    const users = snap.exists ? (snap.data()?.value ?? []) : [];
+    const linkedIndex = users.findIndex(user => String(user.oryaId || '') === oryaId);
+
+    if (mode === 'login') {
+      if (linkedIndex < 0) throw new Error('not_registered');
+      resolvedUser = { ...users[linkedIndex], role: normalizeUserRole(users[linkedIndex].role) };
+      return;
+    }
+
+    if (mode === 'link') {
+      if (!linkUserId) throw new Error('invalid_state');
+      if (linkedIndex >= 0 && users[linkedIndex].id !== linkUserId) throw new Error('already_linked');
+      const accountIndex = users.findIndex(user => user.id === linkUserId);
+      if (accountIndex < 0 || users[accountIndex].isBanned) throw new Error('invalid_session');
+      const emailAvailable = email && !users.some((user, index) => (
+        index !== accountIndex && String(user.email || '').toLowerCase() === email
+      ));
+      resolvedUser = {
+        ...users[accountIndex],
+        role: normalizeUserRole(users[accountIndex].role),
+        oryaId,
+        ...(!users[accountIndex].email && emailAvailable ? { email } : {}),
+      };
+      users[accountIndex] = resolvedUser;
+      tx.set(ref, { value: users });
+      return;
+    }
+
+    if (!termsAccepted || !privacyAccepted || !ageConfirmed) throw new Error('agreements_required');
+    if (linkedIndex >= 0) throw new Error('already_registered');
+    if (email && users.some(user => String(user.email || '').toLowerCase() === email)) {
+      throw new Error('email_in_use');
+    }
+
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const username = externalOAuthUsername(users, 'oy', oryaId);
+    const safeDisplayName = displayName || username;
+    resolvedUser = {
+      id,
+      username,
+      email,
+      displayName: safeDisplayName,
+      nickname: safeDisplayName,
+      name: safeDisplayName,
+      role: VISITOR_ROLE,
+      isBanned: false,
+      createdAt: now,
+      oryaId,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      ageConfirmedAt: now,
+      termsVersion: '2026-08-27',
+      privacyVersion: '2026-08-27',
+    };
+    users.push(resolvedUser);
+    tx.set(ref, { value: users });
+  });
+
+  return resolvedUser;
+}
+
+app.get('/api/account/orya/link', requireAccountAuth, async (req, res) => {
+  if (!ORYA_SERVICE_KEY || !ORYA_SERVICE_SECRET) {
+    return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?orya=config_error`);
+  }
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/api/auth/login?return_to=%2Fsettings`);
+    return startOryaAuthorization(res, { mode: 'link', linkUserId: account.user.id });
+  } catch (error) {
+    console.error('[account/orya/link]', error?.message || error);
+    return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?orya=error`);
+  }
+});
+
+// Orya OAuth uses a provider-issued, one-time state instead of an authorization
+// code. The state is bound to this browser in a signed, HttpOnly cookie and is
+// valid for at most the provider's five-minute window.
+app.get('/api/auth/orya', authLimiter, async (req, res) => {
+  if (!ORYA_SERVICE_KEY || !ORYA_SERVICE_SECRET) {
+    return res.redirect('/?orya_error=orya_config');
+  }
+  const mode = req.query.mode === 'register' ? 'register' : 'login';
+  const termsAccepted = req.query.terms_accepted === 'true';
+  const privacyAccepted = req.query.privacy_accepted === 'true';
+  const ageConfirmed = req.query.age_confirmed === 'true';
+  if (mode === 'register' && (!termsAccepted || !privacyAccepted || !ageConfirmed)) {
+    return res.redirect('/?orya_error=agreements_required');
+  }
+  const requestedRedirect = String(req.query.redirect_uri || '');
+  const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
+  try {
+    return startOryaAuthorization(res, {
+      redirectUri: originalRedirectUri,
+      mode,
+      termsAccepted,
+      privacyAccepted,
+      ageConfirmed,
+    });
+  } catch (error) {
+    console.error('[auth/orya]', error?.message || error);
+    const params = new URLSearchParams({ orya_error: 'orya_error' });
+    if (originalRedirectUri) params.set('redirect_uri', originalRedirectUri);
+    return res.redirect(`/?${params.toString()}`);
+  }
+});
+
+app.get('/api/auth/orya/callback', async (req, res) => {
+  const providerState = String(req.query.state || '');
+  const localStateToken = getOAuthStateCookie(req, 'orya');
+  const oauthState = await verifyOAuthState(localStateToken);
+  if (!oauthState
+    || oauthState.provider !== 'orya'
+    || !oauthSafeEqual(oauthState.providerState, providerState)) {
+    return res.redirect('/?orya_error=invalid_state');
+  }
+  clearOAuthStateCookie(res, 'orya');
+  const {
+    redirectUri: originalRedirectUri,
+    mode,
+    linkUserId,
+    termsAccepted,
+    privacyAccepted,
+    ageConfirmed,
+  } = oauthState;
+
+  function backToLogin(oryaError) {
+    if (mode === 'link') {
+      return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?orya=${encodeURIComponent(oryaError)}`);
+    }
+    const params = new URLSearchParams({ orya_error: oryaError });
+    if (originalRedirectUri && originalRedirectUri !== '/') params.set('redirect_uri', originalRedirectUri);
+    return res.redirect(`/?${params.toString()}`);
+  }
+
+  try {
+    const { response, data } = await oryaPost('/api/oauth/verify', {
+      service_key: ORYA_SERVICE_KEY,
+      service_secret: ORYA_SERVICE_SECRET,
+      state: providerState,
+    });
+    const oryaProfile = data?.user || data;
+    if (!response.ok || !oryaProfile?.id) {
+      console.error('[orya/callback] verification failed:', response.status);
+      return backToLogin([401, 410].includes(response.status) ? 'invalid_state' : 'orya_error');
+    }
+
+    const user = await resolveOryaUser({
+      mode,
+      linkUserId,
+      profile: oryaProfile,
+      termsAccepted,
+      privacyAccepted,
+      ageConfirmed,
+    });
+    if (!user) return backToLogin('orya_error');
+    if (user.isBanned) return backToLogin('banned');
+
+    const sessionVersion = await getSessionVersion();
+    const refreshId = newRefreshId();
+    const [accessToken] = await Promise.all([
+      signAccess({
+        userId: user.id,
+        role: user.role,
+        sessionVersion,
+        authVersion: user.authVersion || 0,
+        remember: true,
+      }),
+      storeRefresh(refreshId, {
+        userId: user.id,
+        role: user.role,
+        remember: true,
+        sessionVersion,
+        authVersion: user.authVersion || 0,
+        expiresAt: Date.now() + REFRESH_TTL_LONG * 1000,
+      }),
+    ]);
+    setAccessCookie(res, accessToken);
+    setRefreshCookie(res, refreshId, true);
+
+    if (mode === 'link') {
+      return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?orya=linked`);
+    }
+    if (originalRedirectUri) {
+      const url = new URL(originalRedirectUri);
+      const ssoToken = await signSSO(user.id, user.role, url.origin, true);
+      url.searchParams.set('token', ssoToken);
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return res.redirect(url.toString());
+    }
+    return res.redirect('/');
+  } catch (error) {
+    const safeError = [
+      'not_registered',
+      'already_registered',
+      'already_linked',
+      'email_in_use',
+      'agreements_required',
+      'invalid_state',
+      'invalid_session',
+    ].includes(error?.message) ? error.message : 'orya_error';
+    if (safeError === 'orya_error') console.error('[orya/callback]', error?.message || error);
+    return backToLogin(safeError);
+  }
+});
 
 // GET /api/auth/bytenode — bytenode authorize로 리다이렉트
 app.get('/api/auth/bytenode', async (req, res) => {
@@ -1731,10 +2095,23 @@ app.get('/api/auth/bytenode', async (req, res) => {
   }
   const redirect_uri = bytenodeCallbackUrl();
   const mode = req.query.mode === 'register' ? 'register' : 'login';
+  const termsAccepted = req.query.terms_accepted === 'true';
+  const privacyAccepted = req.query.privacy_accepted === 'true';
+  const ageConfirmed = req.query.age_confirmed === 'true';
+  if (mode === 'register' && (!termsAccepted || !privacyAccepted || !ageConfirmed)) {
+    return res.redirect('/?bn_error=agreements_required');
+  }
   const requestedRedirect = String(req.query.redirect_uri || '');
   const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
-  const state = await signOAuthState({ redirectUri: originalRedirectUri, mode });
-  setOAuthStateCookie(res, state);
+  const state = await signOAuthState({
+    redirectUri: originalRedirectUri,
+    mode,
+    provider: 'bytenode',
+    termsAccepted,
+    privacyAccepted,
+    ageConfirmed,
+  });
+  setOAuthStateCookie(res, 'bytenode', state);
   const url = `${BYTENODE_AUTH_URL}?response_type=code&client_id=${BYTENODE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirect_uri)}&state=${state}`;
   res.redirect(url);
 });
@@ -1748,9 +2125,18 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
 
   // 서명된 state에서 원래 redirect_uri + 로그인/가입 의도(mode) 복원
   const oauthState = await verifyOAuthState(state);
-  if (!oauthState || !hasMatchingOAuthState(req, state)) return res.redirect('/?bn_error=invalid_state');
-  res.clearCookie('sv_oauth_state', { path: '/api/auth/bytenode/callback' });
-  const { redirectUri: originalRedirectUri, mode, linkUserId } = oauthState;
+  if (!oauthState || oauthState.provider !== 'bytenode' || !hasMatchingOAuthState(req, 'bytenode', state)) {
+    return res.redirect('/?bn_error=invalid_state');
+  }
+  clearOAuthStateCookie(res, 'bytenode');
+  const {
+    redirectUri: originalRedirectUri,
+    mode,
+    linkUserId,
+    termsAccepted,
+    privacyAccepted,
+    ageConfirmed,
+  } = oauthState;
 
   function backToLogin(bnError) {
     if (mode === 'link') {
@@ -1771,7 +2157,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     const tokenData = await tokenRes.json().catch(() => null);
     const accessToken = tokenData && (tokenData.access_token || tokenData.token);
     if (!tokenRes.ok || !accessToken) {
-      console.error('[bytenode/callback] token response:', JSON.stringify(tokenData));
+      console.error('[bytenode/callback] token exchange failed:', tokenRes.status);
       return backToLogin('bytenode_error');
     }
 
@@ -1782,9 +2168,10 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     const bnUser = await userRes.json().catch(() => null);
     const bnId = String(bnUser?.id || bnUser?.userId || bnUser?.sub || bnUser?.user?.id || '');
     if (!userRes.ok || !bnId) {
-      console.error('[bytenode/callback] userinfo error:', JSON.stringify(bnUser));
+      console.error('[bytenode/callback] userinfo failed:', userRes.status);
       return backToLogin('bytenode_error');
     }
+    const bnEmail = normalizedProviderEmail(bnUser?.email);
 
     // 3) Firestore에서 기존 계정 찾기
     const users = await getUsers();
@@ -1795,10 +2182,13 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       if (user && user.id !== linkUserId) return backToLogin('already_linked');
       const linkIndex = users.findIndex(u => u.id === linkUserId);
       if (linkIndex < 0 || users[linkIndex].isBanned) return backToLogin('invalid_session');
+      const emailAvailable = bnEmail && !users.some((candidate, index) => (
+        index !== linkIndex && String(candidate.email || '').toLowerCase() === bnEmail
+      ));
       user = {
         ...users[linkIndex],
         bytenodeId: bnId,
-        email: users[linkIndex].email || bnUser.email || '',
+        ...(!users[linkIndex].email && emailAvailable ? { email: bnEmail } : {}),
       };
       users[linkIndex] = user;
       await saveUsers(users);
@@ -1806,25 +2196,33 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       // 로그인 의도인데 연결된 계정이 없으면 새로 만들지 않고 에러로 돌려보낸다
       if (!user) return backToLogin('not_registered');
     } else {
-      // 가입 의도인데 이미 연결된 계정이 있으면 그냥 로그인만 시켜준다
-      if (!user) {
-        const id = uuid();
-        const username = `bn_${bnId}`.slice(0, 20).replace(/[^a-zA-Z0-9_]/g, '_');
-        const displayName = bnUser.displayName || bnUser.username || username;
-        user = {
-          id,
-          username,
-          email: bnUser.email || '',
-          displayName,
-          nickname: displayName,
-          name: displayName,
-          role: VISITOR_ROLE,
-          isBanned: false,
-          createdAt: Date.now(),
-          bytenodeId: bnId,
-        };
-        await saveUsers([...users, user]);
+      if (user) return backToLogin('already_registered');
+      if (!termsAccepted || !privacyAccepted || !ageConfirmed) return backToLogin('agreements_required');
+      if (bnEmail && users.some(candidate => String(candidate.email || '').toLowerCase() === bnEmail)) {
+        return backToLogin('email_in_use');
       }
+      const now = Date.now();
+      const id = crypto.randomUUID();
+      const username = externalOAuthUsername(users, 'bn', bnId);
+      const displayName = String(bnUser.displayName || bnUser.username || username).trim().slice(0, 40) || username;
+      user = {
+        id,
+        username,
+        email: bnEmail,
+        displayName,
+        nickname: displayName,
+        name: displayName,
+        role: VISITOR_ROLE,
+        isBanned: false,
+        createdAt: now,
+        bytenodeId: bnId,
+        termsAcceptedAt: now,
+        privacyAcceptedAt: now,
+        ageConfirmedAt: now,
+        termsVersion: '2026-08-27',
+        privacyVersion: '2026-08-27',
+      };
+      await saveUsers([...users, user]);
     }
 
     if (user.isBanned) return res.status(403).send('계정이 정지되었습니다.');

@@ -252,6 +252,14 @@
     .submit:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
     .submit:disabled { opacity: .35; cursor: not-allowed; }
     .submit svg { width: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .oauth-provider-list { display: grid; gap: 8px; }
+    .oauth-provider-button {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+    }
+    .oauth-provider-logo { width: 54px; height: 22px; object-fit: contain; flex: 0 0 auto; }
+    .oauth-provider-logo.orya { width: 24px; height: 24px; }
 
     .msg {
       margin-top: 12px; padding: 10px 14px;
@@ -495,10 +503,16 @@
           <span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span>
           <div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div>
         </div>
-        <button type="button" id="bytenode-btn" class="submit" style="background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.15);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
-          bytenode 계정으로 로그인
-        </button>
+        <div class="oauth-provider-list">
+          <button type="button" id="bytenode-btn" class="submit oauth-provider-button">
+            <img class="oauth-provider-logo" src="/bytenode-studio-logo.png" alt="" aria-hidden="true" />
+            Bytenode 계정으로 로그인
+          </button>
+          <button type="button" id="orya-btn" class="submit oauth-provider-button">
+            <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
+            Orya 계정으로 로그인
+          </button>
+        </div>
       </div>
 
       <!-- 회원가입 -->
@@ -523,6 +537,10 @@
             <label class="agreement-card">
               <input type="checkbox" id="r-privacy" />
               <span><b>개인정보 수집·이용 동의</b> <span style="color:var(--fp-muted)">(필수)</span><br /><a href="https://scivill.vercel.app/privacy-consent" target="_blank" rel="noopener noreferrer">동의 내용 보기</a> · <a href="https://scivill.vercel.app/privacy" target="_blank" rel="noopener noreferrer">처리방침 보기</a></span>
+            </label>
+            <label class="agreement-card">
+              <input type="checkbox" id="r-age" />
+              <span><b>만 14세 이상 확인</b> <span style="color:var(--fp-muted)">(필수)</span><br />생년월일은 수집하지 않으며 연령 기준 충족 여부만 확인합니다.</span>
             </label>
             <div class="reg-actions"><button type="button" class="submit" onclick="nextRegisterStep()">동의하고 계속 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
@@ -594,10 +612,16 @@
         </form>
         <div class="reg-alternative" id="reg-alternative">
           <div style="display:flex;align-items:center;gap:10px;margin:12px 0 7px;"><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div><span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div></div>
-          <button type="button" id="bytenode-reg-btn" class="submit secondary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12h8M12 8v8"/></svg>
-            bytenode 계정으로 회원가입
-          </button>
+          <div class="oauth-provider-list">
+            <button type="button" id="bytenode-reg-btn" class="submit secondary">
+              <img class="oauth-provider-logo" src="/bytenode-studio-logo.png" alt="" aria-hidden="true" />
+              Bytenode 계정으로 회원가입
+            </button>
+            <button type="button" id="orya-reg-btn" class="submit secondary">
+              <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
+              Orya 계정으로 회원가입
+            </button>
+          </div>
         </div>
       </div>
       </div>
@@ -693,7 +717,7 @@
       invalid_username:    '아이디는 영문·숫자·_로 3~20자여야 합니다.',
       invalid_password:    '비밀번호는 6자 이상이어야 합니다.',
       invalid_display_name:'표시 이름은 1~40자로 입력해주세요.',
-      agreements_required: '이용약관과 필수 개인정보 수집·이용에 동의해주세요.',
+      agreements_required: '이용약관·필수 개인정보 수집·이용에 동의하고 만 14세 이상임을 확인해주세요.',
       invalid_email:       '올바른 이메일 주소를 입력해주세요.',
       email_taken:         '이미 다른 계정에서 사용 중인 이메일입니다.',
       email_verification_required: '이메일 인증을 완료해주세요.',
@@ -713,18 +737,35 @@
     const BN_ERR = {
       not_registered: '가입된 계정이 아닙니다. 먼저 bytenode 계정으로 회원가입해주세요.',
       already_registered: '이미 가입된 계정입니다. bytenode 계정으로 로그인해주세요.',
+      email_in_use: 'Bytenode 이메일이 기존 DS-GO 계정에서 사용 중입니다. 기존 계정으로 로그인한 뒤 설정에서 Bytenode를 연결해주세요.',
       bytenode_error: 'bytenode 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
       bytenode_config: 'bytenode 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해주세요.',
       invalid_state: '로그인 요청이 만료되었거나 유효하지 않습니다. 다시 시도해주세요.',
+      agreements_required: '간편 회원가입 전 이용약관·필수 개인정보 처리에 동의하고 만 14세 이상임을 확인해주세요.',
+    };
+    const ORYA_ERR = {
+      not_registered: '가입된 계정이 아닙니다. 먼저 Orya 계정으로 회원가입해주세요.',
+      already_registered: '이미 가입된 Orya 계정입니다. Orya 계정으로 로그인해주세요.',
+      email_in_use: 'Orya 이메일이 기존 DS-GO 계정에서 사용 중입니다. 기존 계정으로 로그인한 뒤 설정에서 Orya를 연결해주세요.',
+      already_linked: '해당 Orya 계정은 이미 다른 DS-GO 계정에 연결되어 있습니다.',
+      orya_error: 'Orya 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
+      orya_config: 'Orya 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해주세요.',
+      invalid_state: 'Orya 로그인 요청이 만료되었거나 유효하지 않습니다. 5분 안에 다시 시도해주세요.',
+      agreements_required: '간편 회원가입 전 이용약관·필수 개인정보 처리에 동의하고 만 14세 이상임을 확인해주세요.',
+      banned: '정지된 계정입니다. 관리자에게 문의해주세요.',
     };
     (() => {
-      const bnErr = params.get('bn_error');
-      if (!bnErr) return;
-      if (bnErr === 'not_registered') switchTab('login');
-      else switchTab('register');
-      showMsg(bnErr === 'not_registered' ? 'login-msg' : 'reg-msg', BN_ERR[bnErr] || BN_ERR.bytenode_error, 'err');
+      const provider = params.has('orya_error') ? 'orya' : 'bytenode';
+      const key = provider === 'orya' ? 'orya_error' : 'bn_error';
+      const oauthError = params.get(key);
+      if (!oauthError) return;
+      const loginError = oauthError === 'not_registered' || oauthError === 'banned' || oauthError === 'invalid_state';
+      switchTab(loginError ? 'login' : 'register');
+      const errors = provider === 'orya' ? ORYA_ERR : BN_ERR;
+      const fallback = provider === 'orya' ? ORYA_ERR.orya_error : BN_ERR.bytenode_error;
+      showMsg(loginError ? 'login-msg' : 'reg-msg', errors[oauthError] || fallback, 'err');
       const url = new URL(location.href);
-      url.searchParams.delete('bn_error');
+      url.searchParams.delete(key);
       history.replaceState({}, '', url);
     })();
 
@@ -757,17 +798,32 @@
       showMsg(messageId, '로그인되었습니다.', 'ok');
     }
 
-    // ── Bytenode OAuth ───────────────────────────────────────────────────────
-    function goBytenode(mode) {
+    // ── 간편 OAuth 로그인 ─────────────────────────────────────────────────────
+    function goOAuth(provider, mode) {
       const params = new URLSearchParams(window.location.search);
       const ru = params.get('redirect_uri') || '';
       const qs = new URLSearchParams();
       qs.set('mode', mode);
       if (ru) qs.set('redirect_uri', ru);
-      window.location.href = '/api/auth/bytenode?' + qs.toString();
+      if (mode === 'register') {
+        const termsAccepted = document.getElementById('r-terms').checked;
+        const privacyAccepted = document.getElementById('r-privacy').checked;
+        const ageConfirmed = document.getElementById('r-age').checked;
+        if (!termsAccepted || !privacyAccepted || !ageConfirmed) {
+          setRegisterStep(1);
+          showMsg('reg-msg', ERR.agreements_required, 'err');
+          return;
+        }
+        qs.set('terms_accepted', 'true');
+        qs.set('privacy_accepted', 'true');
+        qs.set('age_confirmed', 'true');
+      }
+      window.location.href = `/api/auth/${provider}?${qs.toString()}`;
     }
-    document.getElementById('bytenode-btn').addEventListener('click', () => goBytenode('login'));
-    document.getElementById('bytenode-reg-btn').addEventListener('click', () => goBytenode('register'));
+    document.getElementById('bytenode-btn').addEventListener('click', () => goOAuth('bytenode', 'login'));
+    document.getElementById('bytenode-reg-btn').addEventListener('click', () => goOAuth('bytenode', 'register'));
+    document.getElementById('orya-btn').addEventListener('click', () => goOAuth('orya', 'login'));
+    document.getElementById('orya-reg-btn').addEventListener('click', () => goOAuth('orya', 'register'));
 
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
@@ -822,7 +878,7 @@
 
     function nextRegisterStep() {
       if (registrationStep === 1) {
-        if (!document.getElementById('r-terms').checked || !document.getElementById('r-privacy').checked) {
+        if (!document.getElementById('r-terms').checked || !document.getElementById('r-privacy').checked || !document.getElementById('r-age').checked) {
           registrationError(ERR.agreements_required); return;
         }
       }
@@ -967,6 +1023,7 @@
             password,
             termsAccepted: document.getElementById('r-terms').checked,
             privacyAccepted: document.getElementById('r-privacy').checked,
+            ageConfirmed: document.getElementById('r-age').checked,
           }),
         });
         const data = await res.json().catch(() => ({ error: 'server_error' }));
