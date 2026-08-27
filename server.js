@@ -10,12 +10,13 @@ const rateLimit   = require('express-rate-limit');
 const cors        = require('cors');
 const nodemailer  = require('nodemailer');
 const { SignJWT, jwtVerify } = require('jose');
-const admin       = require('firebase-admin');
+const { cert, initializeApp } = require('firebase-admin/app');
+const { getFirestore } = require('firebase-admin/firestore');
 
 // ── Firebase 초기화 ──────────────────────────────────────────────────────────
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-const db = admin.firestore();
+initializeApp({ credential: cert(serviceAccount) });
+const db = getFirestore();
 // Canonical Scivill account store. All service providers already read scivill2;
 // using a separate `shared` collection here created duplicate identities and
 // made existing administrator credentials impossible to use through SSO.
