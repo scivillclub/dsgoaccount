@@ -259,7 +259,9 @@
       color: #fff;
     }
     .oauth-provider-logo { width: 54px; height: 22px; object-fit: contain; flex: 0 0 auto; }
-    .oauth-provider-logo.orya { width: 24px; height: 24px; }
+    .oauth-provider-logo.orya,
+    .oauth-provider-logo.superschool { width: 24px; height: 24px; }
+    .oauth-provider-logo.superschool { border-radius: 5px; background: #fff; }
 
     .msg {
       margin-top: 12px; padding: 10px 14px;
@@ -510,7 +512,11 @@
           </button>
           <button type="button" id="orya-btn" class="submit oauth-provider-button">
             <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
-            Orya 계정으로 로그인
+            오량인 계정으로 로그인
+          </button>
+          <button type="button" id="superschool-btn" class="submit oauth-provider-button">
+            <img class="oauth-provider-logo superschool" src="/superschool-logo.svg" alt="" aria-hidden="true" />
+            슈퍼스쿨 계정으로 로그인
           </button>
         </div>
       </div>
@@ -619,7 +625,11 @@
             </button>
             <button type="button" id="orya-reg-btn" class="submit secondary">
               <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
-              Orya 계정으로 회원가입
+              오량인 계정으로 회원가입
+            </button>
+            <button type="button" id="superschool-reg-btn" class="submit secondary">
+              <img class="oauth-provider-logo superschool" src="/superschool-logo.svg" alt="" aria-hidden="true" />
+              슈퍼스쿨 계정으로 회원가입
             </button>
           </div>
         </div>
@@ -744,13 +754,13 @@
       agreements_required: '간편 회원가입 전 이용약관·필수 개인정보 처리에 동의하고 만 14세 이상임을 확인해주세요.',
     };
     const ORYA_ERR = {
-      not_registered: '가입된 계정이 아닙니다. 먼저 Orya 계정으로 회원가입해주세요.',
-      already_registered: '이미 가입된 Orya 계정입니다. Orya 계정으로 로그인해주세요.',
-      email_in_use: 'Orya 이메일이 기존 DS-GO 계정에서 사용 중입니다. 기존 계정으로 로그인한 뒤 설정에서 Orya를 연결해주세요.',
-      already_linked: '해당 Orya 계정은 이미 다른 DS-GO 계정에 연결되어 있습니다.',
-      orya_error: 'Orya 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
-      orya_config: 'Orya 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해주세요.',
-      invalid_state: 'Orya 로그인 요청이 만료되었거나 유효하지 않습니다. 5분 안에 다시 시도해주세요.',
+      not_registered: '가입된 계정이 아닙니다. 먼저 오량인 계정으로 회원가입해주세요.',
+      already_registered: '이미 가입된 오량인 계정입니다. 오량인 계정으로 로그인해주세요.',
+      email_in_use: '오량인 이메일이 기존 DS-GO 계정에서 사용 중입니다. 기존 계정으로 로그인한 뒤 설정에서 오량인을 연결해주세요.',
+      already_linked: '해당 오량인 계정은 이미 다른 DS-GO 계정에 연결되어 있습니다.',
+      orya_error: '오량인 인증 중 오류가 발생했습니다. 다시 시도해주세요.',
+      orya_config: '오량인 로그인이 아직 설정되지 않았습니다. 관리자에게 문의해주세요.',
+      invalid_state: '오량인 로그인 요청이 만료되었거나 유효하지 않습니다. 5분 안에 다시 시도해주세요.',
       agreements_required: '간편 회원가입 전 이용약관·필수 개인정보 처리에 동의하고 만 14세 이상임을 확인해주세요.',
       banned: '정지된 계정입니다. 관리자에게 문의해주세요.',
     };
@@ -824,6 +834,16 @@
     document.getElementById('bytenode-reg-btn').addEventListener('click', () => goOAuth('bytenode', 'register'));
     document.getElementById('orya-btn').addEventListener('click', () => goOAuth('orya', 'login'));
     document.getElementById('orya-reg-btn').addEventListener('click', () => goOAuth('orya', 'register'));
+    function showSuperschoolNotice(mode) {
+      const message = '슈퍼스쿨 공식 계정 연동 승인을 기다리고 있습니다. 슈퍼스쿨 아이디와 비밀번호는 DS-GO에 입력하거나 저장하지 않습니다.';
+      if (mode === 'register') {
+        showMsg('reg-msg', message, 'err');
+      } else {
+        showMsg('login-msg', message, 'err');
+      }
+    }
+    document.getElementById('superschool-btn').addEventListener('click', () => showSuperschoolNotice('login'));
+    document.getElementById('superschool-reg-btn').addEventListener('click', () => showSuperschoolNotice('register'));
 
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
