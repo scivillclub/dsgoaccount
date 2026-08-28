@@ -1662,15 +1662,67 @@ async function requireAdminAccount(req, res, next) {
   }
 }
 
+const REPORT_STATUSES = ['pending', 'reviewing', 'resolved', 'dismissed'];
+
+function normalizeReportStatus(value) {
+  return REPORT_STATUSES.includes(value) ? value : 'pending';
+}
+
 function reportView(doc) {
-  const data = doc.data();
-  return { id: doc.id, ...data };
+  const data = doc.data() || {};
+  return { id: doc.id, ...data, status: normalizeReportStatus(data.status) };
+}
+
+// 오래된 신고 문서에는 신고자 스냅샷이 없을 수 있어 계정 ID로 이름과 아이디를 보완한다.
+async function withReporterIdentity(reports) {
+  const missing = reports.filter(r => r.reporterId && (!r.reporterUsername || !r.reporterDisplayName));
+  if (!missing.length) return reports;
+  const users = await getUsers();
+  const byId = new Map(users.map(u => [String(u.id), u]));
+  return reports.map(report => {
+    const user = byId.get(String(report.reporterId || ''));
+    if (!user) return report;
+    return {
+      ...report,
+      reporterUsername: report.reporterUsername || user.username || '',
+      reporterDisplayName: report.reporterDisplayName
+        || user.displayName || user.nickname || user.name || user.username || '',
+    };
+  });
+}
+
+function reportOwnerView(doc) {
+  const data = doc.data() || {};
+  const status = normalizeReportStatus(data.status);
+  return {
+    id: doc.id,
+    targetUsername: String(data.targetUsername || ''),
+    targetDisplayName: String(data.targetDisplayName || ''),
+    reason: String(data.reason || ''),
+    status,
+    createdAt: Number(data.createdAt || 0),
+    updatedAt: Number(data.updatedAt || data.createdAt || 0),
+    handledAt: data.handledAt ? Number(data.handledAt) : null,
+  };
 }
 
 function messageView(doc) {
   const data = doc.data();
   return { id: doc.id, ...data };
 }
+
+app.get('/api/account/reports', requireAccountAuth, async (req, res) => {
+  try {
+    const account = await loadCurrentAccount(req);
+    if (!account) return res.status(401).json({ ok: false, error: 'invalid_session' });
+    const snap = await db.collection(REPORTS_COL).where('reporterId', '==', account.user.id).limit(100).get();
+    const reports = snap.docs.map(reportOwnerView).sort((left, right) => right.createdAt - left.createdAt);
+    return res.json({ ok: true, reports });
+  } catch (e) {
+    console.error('[account/reports:list]', e);
+    return res.status(500).json({ ok: false, error: 'server_error' });
+  }
+});
 
 app.post('/api/account/reports', requireAccountAuth, requireAccountOrigin, reportLimiter, async (req, res) => {
   const targetUsername = String(req.body?.targetUsername || '').trim();
@@ -1704,7 +1756,10 @@ app.post('/api/account/reports', requireAccountAuth, requireAccountOrigin, repor
       handledAt: null,
       handledBy: '',
     });
-    res.status(201).json({ ok: true, report: { id: ref.id, status: 'pending', createdAt: now } });
+    res.status(201).json({
+      ok: true,
+      report: { id: ref.id, targetUsername, targetDisplayName, reason, status: 'pending', createdAt: now, updatedAt: now, handledAt: null },
+    });
   } catch (e) {
     console.error('[account/reports:create]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -1759,7 +1814,8 @@ app.get('/api/admin/account/users', requireAuth, requireAdminOrigin, requireAdmi
 app.get('/api/admin/reports', requireAuth, requireAdminOrigin, requireAdminAccount, async (req, res) => {
   try {
     const snap = await db.collection(REPORTS_COL).orderBy('createdAt', 'desc').limit(200).get();
-    res.json({ ok: true, reports: snap.docs.map(reportView) });
+    const reports = await withReporterIdentity(snap.docs.map(reportView));
+    res.json({ ok: true, reports });
   } catch (e) {
     console.error('[admin/reports:list]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
@@ -1769,7 +1825,7 @@ app.get('/api/admin/reports', requireAuth, requireAdminOrigin, requireAdminAccou
 app.patch('/api/admin/reports/:id', requireAuth, requireAdminOrigin, requireAdminAccount, authLimiter, async (req, res) => {
   const status = String(req.body?.status || '');
   const adminNote = String(req.body?.adminNote || '').trim();
-  if (!['pending', 'reviewing', 'resolved', 'dismissed'].includes(status)) {
+  if (!REPORT_STATUSES.includes(status)) {
     return res.status(400).json({ ok: false, error: 'invalid_report_status' });
   }
   if (adminNote.length > 1000) return res.status(400).json({ ok: false, error: 'admin_note_too_long' });
@@ -1786,8 +1842,9 @@ app.patch('/api/admin/reports/:id', requireAuth, requireAdminOrigin, requireAdmi
       handledAt: finalStatus ? now : null,
       handledBy: finalStatus ? req.account.user.id : '',
     });
-    res.json({ ok: true, report: { id: ref.id, ...snap.data(), status, adminNote, updatedAt: now,
-      handledAt: finalStatus ? now : null, handledBy: finalStatus ? req.account.user.id : '' } });
+    const [report] = await withReporterIdentity([{ id: ref.id, ...snap.data(), status, adminNote, updatedAt: now,
+      handledAt: finalStatus ? now : null, handledBy: finalStatus ? req.account.user.id : '' }]);
+    res.json({ ok: true, report });
   } catch (e) {
     console.error('[admin/reports:update]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
