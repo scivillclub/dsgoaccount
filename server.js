@@ -65,15 +65,23 @@ const ACCOUNT_ORIGIN = new URL(
   process.env.BASE_URL || 'https://dsgoaccount.vercel.app'
 ).origin;
 
-function isAllowedSSORedirect(redirectUri) {
+function normalizeSSORedirect(redirectUri) {
   try {
     const url = new URL(String(redirectUri || ''));
     const isLocal = process.env.NODE_ENV !== 'production'
       && /^(localhost|127\.0\.0\.1)$/.test(url.hostname);
-    return (ALLOWED_ORIGINS.includes(url.origin) || isLocal)
-      && url.pathname === '/api/auth/sso';
+    if (!ALLOWED_ORIGINS.includes(url.origin) && !isLocal) return '';
+
+    if (url.pathname === '/api/auth/sso' || url.pathname === '/api/auth/sso/') {
+      url.pathname = '/api/auth/sso';
+      return url.toString();
+    }
+
+    const callback = new URL('/api/auth/sso', url.origin);
+    callback.searchParams.set('return_to', `${url.pathname}${url.search}${url.hash}`);
+    return callback.toString();
   } catch {
-    return false;
+    return '';
   }
 }
 
@@ -286,6 +294,35 @@ function clearOAuthStateCookie(res, provider) {
 
 function getOAuthStateCookie(req, provider) {
   return parseCookies(req)[oauthStateCookie(provider).name] || '';
+}
+
+function oauthReturnCookie(provider) {
+  const stateCookie = oauthStateCookie(provider);
+  return { name: `${stateCookie.name}_return`, path: stateCookie.path };
+}
+
+function setOAuthReturnCookie(res, provider, redirectUri, maxAge = 10 * 60 * 1000) {
+  const cookie = oauthReturnCookie(provider);
+  if (!redirectUri) {
+    res.clearCookie(cookie.name, { path: cookie.path });
+    return;
+  }
+  res.cookie(cookie.name, redirectUri, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge,
+    path: cookie.path,
+  });
+}
+
+function getOAuthReturnCookie(req, provider) {
+  return parseCookies(req)[oauthReturnCookie(provider).name] || '';
+}
+
+function clearOAuthReturnCookie(res, provider) {
+  const cookie = oauthReturnCookie(provider);
+  res.clearCookie(cookie.name, { path: cookie.path });
 }
 
 function hasMatchingOAuthState(req, provider, state) {
@@ -810,7 +847,8 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
   if (!redirectUri) return res.status(400).json({ ok: false, error: 'missing_redirect_uri' });
 
   try {
-    if (!isAllowedSSORedirect(redirectUri))
+    const normalizedRedirectUri = normalizeSSORedirect(redirectUri);
+    if (!normalizedRedirectUri)
       return res.status(400).json({ ok: false, error: 'invalid_redirect_uri' });
 
     const [users, sessionVersion] = await Promise.all([getUsers(), getSessionVersion()]);
@@ -824,7 +862,7 @@ app.get('/api/auth/sso/issue', requireAuth, async (req, res) => {
       return res.status(401).json({ ok: false, error: 'account_session_invalidated' });
     }
 
-    const url = new URL(redirectUri);
+    const url = new URL(normalizedRedirectUri);
     const remember = await getSessionRemember(req);
     const token = await signSSO(user.id, user.role, url.origin, remember);
     url.searchParams.set('token', token);
@@ -1868,6 +1906,7 @@ async function startOryaAuthorization(res, stateClaims) {
     providerState,
   });
   setOAuthStateCookie(res, 'orya', localState, 5 * 60 * 1000);
+  setOAuthReturnCookie(res, 'orya', stateClaims.redirectUri || '', 5 * 60 * 1000);
   res.setHeader('Referrer-Policy', 'no-referrer');
   return res.redirect(redirectUrl.toString());
 }
@@ -1951,7 +1990,7 @@ app.get('/api/account/orya/link', requireAccountAuth, async (req, res) => {
   try {
     const account = await loadCurrentAccount(req);
     if (!account) return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/api/auth/login?return_to=%2Fsettings`);
-    return startOryaAuthorization(res, { mode: 'link', linkUserId: account.user.id });
+    return await startOryaAuthorization(res, { mode: 'link', linkUserId: account.user.id });
   } catch (error) {
     console.error('[account/orya/link]', error?.message || error);
     return res.redirect(`${ACCOUNT_SETTINGS_ORIGIN}/settings?orya=error`);
@@ -1973,9 +2012,9 @@ app.get('/api/auth/orya', authLimiter, async (req, res) => {
     return res.redirect('/?orya_error=agreements_required');
   }
   const requestedRedirect = String(req.query.redirect_uri || '');
-  const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
+  const originalRedirectUri = normalizeSSORedirect(requestedRedirect);
   try {
-    return startOryaAuthorization(res, {
+    return await startOryaAuthorization(res, {
       redirectUri: originalRedirectUri,
       mode,
       termsAccepted,
@@ -1999,15 +2038,18 @@ app.get('/api/auth/orya/callback', async (req, res) => {
     || !oauthSafeEqual(oauthState.providerState, providerState)) {
     return res.redirect('/?orya_error=invalid_state');
   }
+  const fallbackRedirectUri = normalizeSSORedirect(getOAuthReturnCookie(req, 'orya'));
   clearOAuthStateCookie(res, 'orya');
+  clearOAuthReturnCookie(res, 'orya');
   const {
-    redirectUri: originalRedirectUri,
+    redirectUri: stateRedirectUri,
     mode,
     linkUserId,
     termsAccepted,
     privacyAccepted,
     ageConfirmed,
   } = oauthState;
+  const originalRedirectUri = normalizeSSORedirect(stateRedirectUri) || fallbackRedirectUri;
 
   function backToLogin(oryaError) {
     if (mode === 'link') {
@@ -2103,7 +2145,7 @@ app.get('/api/auth/bytenode', async (req, res) => {
     return res.redirect('/?bn_error=agreements_required');
   }
   const requestedRedirect = String(req.query.redirect_uri || '');
-  const originalRedirectUri = isAllowedSSORedirect(requestedRedirect) ? requestedRedirect : '';
+  const originalRedirectUri = normalizeSSORedirect(requestedRedirect);
   const state = await signOAuthState({
     redirectUri: originalRedirectUri,
     mode,
