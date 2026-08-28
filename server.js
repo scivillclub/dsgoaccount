@@ -684,14 +684,15 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     if (users.find(u => u.username === username || (email && String(u.email || '').toLowerCase() === email)))
       return res.status(409).json({ ok: false, error: 'already_exists' });
 
+    const now = Date.now();
     const id = crypto.randomUUID();
     const pw = await hashPw(password, id);
     const user = {
       id, username, email: email || '', displayName, nickname: displayName, name: displayName,
-      role: VISITOR_ROLE, isBanned: false, createdAt: Date.now(),
-      termsAcceptedAt: Date.now(), privacyAcceptedAt: Date.now(), ageConfirmedAt: Date.now(),
+      role: VISITOR_ROLE, isBanned: false, createdAt: now, localCredentialsCreatedAt: now,
+      termsAcceptedAt: now, privacyAcceptedAt: now, ageConfirmedAt: now,
       termsVersion: '2026-08-27', privacyVersion: '2026-08-27',
-      ...(email ? { emailVerifiedAt: Date.now(), emailConsentAt: Date.now() } : {}),
+      ...(email ? { emailVerifiedAt: now, emailConsentAt: now } : {}),
     };
     const creds = await getCreds();
     creds[id] = pw;
@@ -1525,7 +1526,12 @@ app.post('/api/account/local-credentials', requireAccountAuth, requireAccountOri
         }
         users[index] = { ...users[index], username };
       }
-      users[index] = { ...users[index], authVersion: (users[index].authVersion || 0) + 1 };
+      users[index] = {
+        ...users[index],
+        localCredentialsCreatedAt: users[index].localCredentialsCreatedAt
+          || (account.hasPassword ? users[index].createdAt || Date.now() : Date.now()),
+        authVersion: (users[index].authVersion || 0) + 1,
+      };
       creds[req.session.userId] = newHash;
       updatedUser = users[index];
       tx.set(usersRef, { value: users });
@@ -1574,6 +1580,7 @@ app.post('/api/account/bytenode/unlink', requireAccountAuth, requireAccountOrigi
       if (index < 0) throw new Error('invalid_session');
       updated = { ...users[index] };
       delete updated.bytenodeId;
+      delete updated.bytenodeLinkedAt;
       users[index] = updated;
       tx.set(ref, { value: users });
     });
@@ -1599,6 +1606,7 @@ app.post('/api/account/orya/unlink', requireAccountAuth, requireAccountOrigin, a
       if (index < 0) throw new Error('invalid_session');
       updated = { ...users[index] };
       delete updated.oryaId;
+      delete updated.oryaLinkedAt;
       users[index] = updated;
       tx.set(ref, { value: users });
     });
@@ -1942,6 +1950,7 @@ async function resolveOryaUser({ mode, linkUserId, profile, termsAccepted, priva
         ...users[accountIndex],
         role: normalizeUserRole(users[accountIndex].role),
         oryaId,
+        oryaLinkedAt: users[accountIndex].oryaLinkedAt || Date.now(),
         ...(!users[accountIndex].email && emailAvailable ? { email } : {}),
       };
       users[accountIndex] = resolvedUser;
@@ -1970,6 +1979,7 @@ async function resolveOryaUser({ mode, linkUserId, profile, termsAccepted, priva
       isBanned: false,
       createdAt: now,
       oryaId,
+      oryaLinkedAt: now,
       termsAcceptedAt: now,
       privacyAcceptedAt: now,
       ageConfirmedAt: now,
@@ -2231,6 +2241,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       user = {
         ...users[linkIndex],
         bytenodeId: bnId,
+        bytenodeLinkedAt: users[linkIndex].bytenodeLinkedAt || Date.now(),
         ...(!users[linkIndex].email && emailAvailable ? { email: bnEmail } : {}),
       };
       users[linkIndex] = user;
@@ -2259,6 +2270,7 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
         isBanned: false,
         createdAt: now,
         bytenodeId: bnId,
+        bytenodeLinkedAt: now,
         termsAcceptedAt: now,
         privacyAcceptedAt: now,
         ageConfirmedAt: now,
