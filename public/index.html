@@ -259,9 +259,7 @@
       color: #fff;
     }
     .oauth-provider-logo { width: 54px; height: 22px; object-fit: contain; flex: 0 0 auto; }
-    .oauth-provider-logo.orya,
-    .oauth-provider-logo.superschool { width: 24px; height: 24px; }
-    .oauth-provider-logo.superschool { border-radius: 5px; background: #fff; }
+    .oauth-provider-logo.orya { width: 24px; height: 24px; }
 
     .msg {
       margin-top: 12px; padding: 10px 14px;
@@ -514,10 +512,6 @@
             <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
             오량인 계정으로 로그인
           </button>
-          <button type="button" id="superschool-btn" class="submit oauth-provider-button">
-            <img class="oauth-provider-logo superschool" src="/superschool-logo.svg" alt="" aria-hidden="true" />
-            슈퍼스쿨 계정으로 로그인
-          </button>
         </div>
       </div>
 
@@ -626,10 +620,6 @@
             <button type="button" id="orya-reg-btn" class="submit secondary">
               <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
               오량인 계정으로 회원가입
-            </button>
-            <button type="button" id="superschool-reg-btn" class="submit secondary">
-              <img class="oauth-provider-logo superschool" src="/superschool-logo.svg" alt="" aria-hidden="true" />
-              슈퍼스쿨 계정으로 회원가입
             </button>
           </div>
         </div>
@@ -834,17 +824,6 @@
     document.getElementById('bytenode-reg-btn').addEventListener('click', () => goOAuth('bytenode', 'register'));
     document.getElementById('orya-btn').addEventListener('click', () => goOAuth('orya', 'login'));
     document.getElementById('orya-reg-btn').addEventListener('click', () => goOAuth('orya', 'register'));
-    function showSuperschoolNotice(mode) {
-      const message = '슈퍼스쿨 공식 계정 연동 승인을 기다리고 있습니다. 슈퍼스쿨 아이디와 비밀번호는 DS-GO에 입력하거나 저장하지 않습니다.';
-      if (mode === 'register') {
-        showMsg('reg-msg', message, 'err');
-      } else {
-        showMsg('login-msg', message, 'err');
-      }
-    }
-    document.getElementById('superschool-btn').addEventListener('click', () => showSuperschoolNotice('login'));
-    document.getElementById('superschool-reg-btn').addEventListener('click', () => showSuperschoolNotice('register'));
-
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
     async function handleLogin(e) {
