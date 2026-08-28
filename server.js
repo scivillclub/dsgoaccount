@@ -655,6 +655,7 @@ function requireRegistrationOrigin(req, res, next) {
 // POST /api/auth/register
 app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (req, res) => {
   const username = String(req.body?.username || '').trim();
+  const normalizedUsername = username.toLowerCase();
   const password = String(req.body?.password || '');
   const displayName = String(req.body?.displayName || '').trim();
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -680,10 +681,6 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
         return res.status(409).json({ ok: false, error: 'email_verification_required' });
       }
     }
-    const users = await getUsers();
-    if (users.find(u => u.username === username || (email && String(u.email || '').toLowerCase() === email)))
-      return res.status(409).json({ ok: false, error: 'already_exists' });
-
     const now = Date.now();
     const id = crypto.randomUUID();
     const pw = await hashPw(password, id);
@@ -694,12 +691,23 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
       termsVersion: '2026-08-27', privacyVersion: '2026-08-27',
       ...(email ? { emailVerifiedAt: now, emailConsentAt: now } : {}),
     };
-    const creds = await getCreds();
-    creds[id] = pw;
-    await Promise.all([
-      saveUsers([...users, user]),
-      saveCreds(creds),
-    ]);
+    await db.runTransaction(async tx => {
+      const usersRef = db.collection(SHARED_COL).doc('users');
+      const credsRef = db.collection(SHARED_COL).doc('creds');
+      const [usersSnap, credsSnap] = await Promise.all([tx.get(usersRef), tx.get(credsRef)]);
+      const users = usersSnap.exists ? (usersSnap.data()?.value ?? []) : [];
+      const creds = credsSnap.exists ? (credsSnap.data()?.value ?? {}) : {};
+
+      if (users.some(existing => String(existing.username || '').trim().toLowerCase() === normalizedUsername)) {
+        throw new Error('username_taken');
+      }
+      if (email && users.some(existing => String(existing.email || '').trim().toLowerCase() === email)) {
+        throw new Error('email_taken');
+      }
+
+      tx.set(usersRef, { value: [...users, user] });
+      tx.set(credsRef, { value: { ...creds, [id]: pw } });
+    });
 
     const sv = await getSessionVersion();
     const refreshId = newRefreshId();
@@ -713,6 +721,12 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     clearRegistrationEmailCookies(res);
     res.json({ ok: true, user: { id, username, displayName, role: VISITOR_ROLE } });
   } catch (e) {
+    if (e?.message === 'username_taken') {
+      return res.status(409).json({ ok: false, error: 'username_taken' });
+    }
+    if (e?.message === 'email_taken') {
+      return res.status(409).json({ ok: false, error: 'email_taken' });
+    }
     console.error('[register]', e);
     res.status(500).json({ ok: false, error: 'server_error' });
   }
@@ -728,7 +742,9 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 
   try {
     const [users, creds] = await Promise.all([getUsers(), getCreds()]);
-    const user = users.find(u => u.username === identifier || u.email === identifier);
+    const normalizedIdentifier = identifier.toLowerCase();
+    const user = users.find(u => String(u.username || '').trim().toLowerCase() === normalizedIdentifier
+      || String(u.email || '').trim().toLowerCase() === normalizedIdentifier);
     if (!user) return res.status(401).json({ ok: false, error: 'invalid_credentials' });
     if (user.isBanned) return res.status(403).json({ ok: false, error: 'banned' });
 
@@ -1870,6 +1886,83 @@ function externalOAuthUsername(users, prefix, externalId) {
   throw new Error('username_generation_failed');
 }
 
+// OAuth identity rule for every provider:
+// - Resolve an account only by our immutable user id or the provider's immutable id.
+// - Never merge accounts by display name, username, or email.
+// - Email is used only to reject an ambiguous new signup; linking must be explicit.
+async function resolveBytenodeUser({ mode, linkUserId, profile, termsAccepted, privacyAccepted, ageConfirmed }) {
+  const bytenodeId = String(profile?.id || '').trim();
+  if (!bytenodeId || bytenodeId.length > 200) throw new Error('bytenode_invalid_profile');
+  const email = normalizedProviderEmail(profile?.email);
+  let resolvedUser;
+
+  await db.runTransaction(async tx => {
+    const ref = db.collection(SHARED_COL).doc('users');
+    const snap = await tx.get(ref);
+    const users = snap.exists ? (snap.data()?.value ?? []) : [];
+    const linkedIndex = users.findIndex(user => String(user.bytenodeId || '') === bytenodeId);
+
+    if (mode === 'login') {
+      if (linkedIndex < 0) throw new Error('not_registered');
+      resolvedUser = { ...users[linkedIndex], role: normalizeUserRole(users[linkedIndex].role) };
+      return;
+    }
+
+    if (mode === 'link') {
+      if (!linkUserId) throw new Error('invalid_state');
+      if (linkedIndex >= 0 && users[linkedIndex].id !== linkUserId) throw new Error('already_linked');
+      const accountIndex = users.findIndex(user => user.id === linkUserId);
+      if (accountIndex < 0 || users[accountIndex].isBanned) throw new Error('invalid_session');
+      const emailAvailable = email && !users.some((user, index) => (
+        index !== accountIndex && String(user.email || '').trim().toLowerCase() === email
+      ));
+      resolvedUser = {
+        ...users[accountIndex],
+        role: normalizeUserRole(users[accountIndex].role),
+        bytenodeId,
+        bytenodeLinkedAt: users[accountIndex].bytenodeLinkedAt || Date.now(),
+        ...(!users[accountIndex].email && emailAvailable ? { email } : {}),
+      };
+      users[accountIndex] = resolvedUser;
+      tx.set(ref, { value: users });
+      return;
+    }
+
+    if (!termsAccepted || !privacyAccepted || !ageConfirmed) throw new Error('agreements_required');
+    if (linkedIndex >= 0) throw new Error('already_registered');
+    if (email && users.some(user => String(user.email || '').trim().toLowerCase() === email)) {
+      throw new Error('email_in_use');
+    }
+
+    const now = Date.now();
+    const id = crypto.randomUUID();
+    const username = externalOAuthUsername(users, 'bn', bytenodeId);
+    const displayName = String(profile?.displayName || profile?.username || username).trim().slice(0, 40) || username;
+    resolvedUser = {
+      id,
+      username,
+      email,
+      displayName,
+      nickname: displayName,
+      name: displayName,
+      role: VISITOR_ROLE,
+      isBanned: false,
+      createdAt: now,
+      bytenodeId,
+      bytenodeLinkedAt: now,
+      termsAcceptedAt: now,
+      privacyAcceptedAt: now,
+      ageConfirmedAt: now,
+      termsVersion: '2026-08-27',
+      privacyVersion: '2026-08-27',
+    };
+    users.push(resolvedUser);
+    tx.set(ref, { value: users });
+  });
+
+  return resolvedUser;
+}
+
 async function oryaPost(endpoint, payload) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -2224,61 +2317,15 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
       console.error('[bytenode/callback] userinfo failed:', userRes.status);
       return backToLogin('bytenode_error');
     }
-    const bnEmail = normalizedProviderEmail(bnUser?.email);
-
-    // 3) Firestore에서 기존 계정 찾기
-    const users = await getUsers();
-    let user = users.find(u => u.bytenodeId === bnId);
-
-    if (mode === 'link') {
-      if (!linkUserId) return backToLogin('invalid_state');
-      if (user && user.id !== linkUserId) return backToLogin('already_linked');
-      const linkIndex = users.findIndex(u => u.id === linkUserId);
-      if (linkIndex < 0 || users[linkIndex].isBanned) return backToLogin('invalid_session');
-      const emailAvailable = bnEmail && !users.some((candidate, index) => (
-        index !== linkIndex && String(candidate.email || '').toLowerCase() === bnEmail
-      ));
-      user = {
-        ...users[linkIndex],
-        bytenodeId: bnId,
-        bytenodeLinkedAt: users[linkIndex].bytenodeLinkedAt || Date.now(),
-        ...(!users[linkIndex].email && emailAvailable ? { email: bnEmail } : {}),
-      };
-      users[linkIndex] = user;
-      await saveUsers(users);
-    } else if (mode === 'login') {
-      // 로그인 의도인데 연결된 계정이 없으면 새로 만들지 않고 에러로 돌려보낸다
-      if (!user) return backToLogin('not_registered');
-    } else {
-      if (user) return backToLogin('already_registered');
-      if (!termsAccepted || !privacyAccepted || !ageConfirmed) return backToLogin('agreements_required');
-      if (bnEmail && users.some(candidate => String(candidate.email || '').toLowerCase() === bnEmail)) {
-        return backToLogin('email_in_use');
-      }
-      const now = Date.now();
-      const id = crypto.randomUUID();
-      const username = externalOAuthUsername(users, 'bn', bnId);
-      const displayName = String(bnUser.displayName || bnUser.username || username).trim().slice(0, 40) || username;
-      user = {
-        id,
-        username,
-        email: bnEmail,
-        displayName,
-        nickname: displayName,
-        name: displayName,
-        role: VISITOR_ROLE,
-        isBanned: false,
-        createdAt: now,
-        bytenodeId: bnId,
-        bytenodeLinkedAt: now,
-        termsAcceptedAt: now,
-        privacyAcceptedAt: now,
-        ageConfirmedAt: now,
-        termsVersion: '2026-08-27',
-        privacyVersion: '2026-08-27',
-      };
-      await saveUsers([...users, user]);
-    }
+    // 3) 이름이나 이메일이 아닌 Bytenode 고유 ID로만 로그인·가입·연결한다.
+    const user = await resolveBytenodeUser({
+      mode,
+      linkUserId,
+      profile: { ...bnUser, id: bnId },
+      termsAccepted,
+      privacyAccepted,
+      ageConfirmed,
+    });
 
     if (user.isBanned) return res.status(403).send('계정이 정지되었습니다.');
 
@@ -2308,8 +2355,17 @@ app.get('/api/auth/bytenode/callback', async (req, res) => {
     }
     res.redirect('/');
   } catch (e) {
-    console.error('[bytenode/callback]', e);
-    res.status(500).send('server error');
+    const safeError = [
+      'not_registered',
+      'already_registered',
+      'already_linked',
+      'email_in_use',
+      'agreements_required',
+      'invalid_state',
+      'invalid_session',
+    ].includes(e?.message) ? e.message : 'bytenode_error';
+    if (safeError === 'bytenode_error') console.error('[bytenode/callback]', e?.message || e);
+    return backToLogin(safeError);
   }
 });
 
