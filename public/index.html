@@ -272,6 +272,9 @@
     .logged-in { display: none; text-align: center; }
     .logged-in.on { display: block; }
     .logged-in-id { display: block; margin-top: 5px; color: var(--fp-muted); font: 600 12px/1.4 ui-monospace, monospace; }
+    .logged-in-warn { display: none; margin-bottom: 14px; padding: 12px 13px; border-radius: 9px; background: rgba(229,62,62,.1); color: #fc8181; font-size: 12.5px; line-height: 1.65; text-align: left; }
+    .logged-in-warn.on { display: block; }
+    .logged-in #continue-btn { margin-bottom: 8px; }
 
     .reg-progress-head {
       display: flex; align-items: center; justify-content: space-between;
@@ -332,7 +335,9 @@
     .service-icon { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: rgba(108,92,231,.13); color: #a99df5; font-weight: 900; font-size: 12px; }
     .service-item b { display: block; color: var(--fp-fg); font-size: 12px; }
     .service-item span { display: block; color: var(--fp-muted); font-size: 10.5px; margin-top: 2px; }
-    .reg-alternative { margin-top: 14px; }
+    .reg-method { display: none; min-height: 220px; }
+    .reg-method.on { display: block; animation: stepIn .2s ease; }
+    .reg-method .oauth-provider-list { margin-top: 4px; }
 
     /* DSHS 하단 */
     .dshs-footer {
@@ -465,11 +470,14 @@
 
       <!-- 이미 로그인된 상태 -->
       <div class="logged-in" id="logged-in-box">
+        <p class="logged-in-warn" id="logged-in-warn"></p>
         <p style="font-size:14px;color:var(--fp-fg);margin-bottom:16px;">
           <b id="logged-in-name"></b>님으로 로그인되어 있습니다.
           <span class="logged-in-id" id="logged-in-username"></span>
         </p>
-        <button type="button" class="submit" id="logout-btn">로그아웃</button>
+        <div class="msg" id="logged-in-msg"></div>
+        <button type="button" class="submit" id="continue-btn" style="display:none">이 계정으로 계속하기</button>
+        <button type="button" class="submit secondary" id="logout-btn">로그아웃</button>
       </div>
 
       <div id="auth-forms">
@@ -547,6 +555,27 @@
             <div class="reg-actions"><button type="button" class="submit" onclick="nextRegisterStep()">동의하고 계속 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
+          <section class="reg-method" id="reg-method">
+            <div class="reg-kicker">Method</div>
+            <h2 class="reg-title">어떤 방식으로 가입할까요?</h2>
+            <p class="reg-desc">외부 계정으로 가입하면 표시 이름과 아이디를 자동으로 만들어 드립니다.</p>
+            <div class="oauth-provider-list">
+              <button type="button" class="submit" id="reg-method-local">
+                DS-GO 계정 생성
+                <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg>
+              </button>
+              <button type="button" id="bytenode-reg-btn" class="submit secondary">
+                <img class="oauth-provider-logo" src="/bytenode-studio-logo.png" alt="" aria-hidden="true" />
+                Bytenode 계정으로 회원가입
+              </button>
+              <button type="button" id="orya-reg-btn" class="submit secondary">
+                <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
+                오량인 계정으로 회원가입
+              </button>
+            </div>
+            <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button></div>
+          </section>
+
           <section class="reg-step" data-step="2">
             <div class="reg-kicker">Profile</div>
             <h2 class="reg-title">어떤 이름으로 표시할까요?</h2>
@@ -612,19 +641,6 @@
 
           <div class="msg" id="reg-msg"></div>
         </form>
-        <div class="reg-alternative" id="reg-alternative">
-          <div style="display:flex;align-items:center;gap:10px;margin:12px 0 7px;"><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div><span style="font-size:11px;color:rgba(255,255,255,0.3);letter-spacing:0.05em;">또는</span><div style="flex:1;height:1px;background:rgba(255,255,255,0.1)"></div></div>
-          <div class="oauth-provider-list">
-            <button type="button" id="bytenode-reg-btn" class="submit secondary">
-              <img class="oauth-provider-logo" src="/bytenode-studio-logo.png" alt="" aria-hidden="true" />
-              Bytenode 계정으로 회원가입
-            </button>
-            <button type="button" id="orya-reg-btn" class="submit secondary">
-              <img class="oauth-provider-logo orya" src="/orya-logo.png" alt="" aria-hidden="true" />
-              오량인 계정으로 회원가입
-            </button>
-          </div>
-        </div>
       </div>
       </div>
     </div>
@@ -757,19 +773,27 @@
       agreements_required: '간편 회원가입 전 이용약관·필수 개인정보 처리에 동의하고 만 14세 이상임을 확인해주세요.',
       banned: '정지된 계정입니다. 관리자에게 문의해주세요.',
     };
-    (() => {
-      const provider = params.has('orya_error') ? 'orya' : 'bytenode';
-      const key = provider === 'orya' ? 'orya_error' : 'bn_error';
-      const oauthError = params.get(key);
-      if (!oauthError) return;
+    // OAuth 제공자를 추가할 때는 이 목록에만 한 줄 더하면 된다.
+    // 실패 처리와 자동 SSO 차단이 제공자별 분기 없이 그대로 적용된다.
+    const OAUTH_PROVIDERS = [
+      { id: 'orya',     param: 'orya_error', label: '오량인',  errors: ORYA_ERR, fallback: 'orya_error' },
+      { id: 'bytenode', param: 'bn_error',   label: 'Bytenode', errors: BN_ERR,   fallback: 'bytenode_error' },
+    ];
+
+    // OAuth 로그인이 거절된 직후에는 브라우저에 남아 있던 다른 계정 세션으로
+    // 자동 SSO를 태워서는 안 된다. 그러면 방금 시도한 계정으로 로그인된 것처럼 보인다.
+    const oauthFailure = (() => {
+      const provider = OAUTH_PROVIDERS.find(item => params.has(item.param));
+      if (!provider) return null;
+      const oauthError = params.get(provider.param);
+      if (!oauthError) return null;
       const loginError = oauthError === 'not_registered' || oauthError === 'banned' || oauthError === 'invalid_state';
       switchTab(loginError ? 'login' : 'register');
-      const errors = provider === 'orya' ? ORYA_ERR : BN_ERR;
-      const fallback = provider === 'orya' ? ORYA_ERR.orya_error : BN_ERR.bytenode_error;
-      showMsg(loginError ? 'login-msg' : 'reg-msg', errors[oauthError] || fallback, 'err');
+      showMsg(loginError ? 'login-msg' : 'reg-msg', provider.errors[oauthError] || provider.errors[provider.fallback], 'err');
       const url = new URL(location.href);
-      url.searchParams.delete(key);
+      url.searchParams.delete(provider.param);
       history.replaceState({}, '', url);
+      return { provider, error: oauthError };
     })();
 
     function showMsg(id, text, type) {
@@ -827,6 +851,7 @@
     document.getElementById('bytenode-reg-btn').addEventListener('click', () => goOAuth('bytenode', 'register'));
     document.getElementById('orya-btn').addEventListener('click', () => goOAuth('orya', 'login'));
     document.getElementById('orya-reg-btn').addEventListener('click', () => goOAuth('orya', 'register'));
+    document.getElementById('reg-method-local').addEventListener('click', () => setRegisterStep(2));
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
     async function handleLogin(e) {
@@ -853,6 +878,7 @@
 
     // ── 7단계 회원가입 ──────────────────────────────────────────────────────
     let registrationStep = 1;
+    let registrationMethodOpen = false;
     let registrationEmailVerified = false;
     let registrationVerifiedEmail = '';
     let registrationComplete = false;
@@ -870,7 +896,19 @@
       });
       document.getElementById('reg-step-label').textContent = `STEP ${registrationStep}`;
       document.getElementById('reg-step-count').textContent = `7단계 중 ${registrationStep}단계`;
-      document.getElementById('reg-alternative').style.display = registrationStep === 1 ? 'block' : 'none';
+      registrationMethodOpen = false;
+      document.getElementById('reg-method').classList.remove('on');
+      showMsg('reg-msg', '', '');
+    }
+
+    // 약관에 동의한 뒤 가입 방식을 먼저 고르게 한다. 예전에는 간편 가입 버튼이
+    // 폼 맨 아래에 있어 스크롤하지 않으면 보이지 않았다.
+    function showRegisterMethod() {
+      document.querySelectorAll('.reg-step').forEach(el => el.classList.remove('on'));
+      document.getElementById('reg-method').classList.add('on');
+      registrationMethodOpen = true;
+      document.getElementById('reg-step-label').textContent = 'STEP 1';
+      document.getElementById('reg-step-count').textContent = '가입 방식 선택';
       showMsg('reg-msg', '', '');
     }
 
@@ -893,11 +931,15 @@
           registrationError(ERR.invalid_username); return;
         }
       }
+      if (registrationStep === 1) { showRegisterMethod(); return; }
       if (registrationStep < 5) setRegisterStep(registrationStep + 1);
     }
 
     function previousRegisterStep() {
-      if (!registrationComplete && registrationStep > 1) setRegisterStep(registrationStep - 1);
+      if (registrationComplete) return;
+      if (registrationMethodOpen) { setRegisterStep(1); return; }
+      if (registrationStep === 2) { showRegisterMethod(); return; }
+      if (registrationStep > 1) setRegisterStep(registrationStep - 1);
     }
 
     function setRegistrationEmailStatus(text, type = '') {
@@ -1058,16 +1100,33 @@
       try {
         const r = await authFetch('/api/auth/me');
         if (!r.ok) return;
-        if (redirectUri && !forceLogin) { await afterAuth(); return; }
         if (forceLogin) return;
+        // 방금 OAuth 로그인이 거절됐다면 기존 세션으로 조용히 넘기지 않고,
+        // 어느 계정이 남아 있는지 보여준 뒤 사용자가 직접 고르게 한다.
+        if (redirectUri && !oauthFailure) { await afterAuth(); return; }
         const { user } = await r.json();
         document.getElementById('logged-in-name').textContent = user.displayName || user.username;
         document.getElementById('logged-in-username').textContent = `@${user.username}`;
         document.getElementById('logged-in-box').classList.add('on');
         document.getElementById('auth-forms').style.display = 'none';
         document.getElementById('sso-strip').classList.remove('on');
+        if (oauthFailure) {
+          const warn = document.getElementById('logged-in-warn');
+          warn.textContent = `${oauthFailure.provider.label} 계정으로는 로그인하지 못했습니다. `
+            + (oauthFailure.provider.errors[oauthFailure.error] || '')
+            + ' 이 브라우저에는 아래 계정이 그대로 로그인되어 있습니다. 다른 계정으로 들어가려면 먼저 로그아웃해주세요.';
+          warn.classList.add('on');
+          if (redirectUri) document.getElementById('continue-btn').style.display = '';
+        }
       } catch {}
     })();
+
+    document.getElementById('continue-btn').addEventListener('click', async () => {
+      const button = document.getElementById('continue-btn');
+      button.disabled = true;
+      await afterAuth('logged-in-msg');
+      button.disabled = false;
+    });
 
     document.getElementById('logout-btn').addEventListener('click', async () => {
       try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch {}

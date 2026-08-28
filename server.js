@@ -771,8 +771,9 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   }
 });
 
-// POST /api/auth/logout
-app.post('/api/auth/logout', async (req, res) => {
+// 중앙 세션 종료. 서비스 쪽 로그아웃만으로는 이 쿠키가 남아 다음 로그인 화면에서
+// 곧바로 SSO로 다시 들어가 버리므로, 두 세션을 항상 함께 끊어야 한다.
+async function clearCentralSession(req, res) {
   const cookies = parseCookies(req);
   const refreshId = cookies['sv_refresh'];
   if (refreshId) await deleteRefresh(refreshId).catch(() => {});
@@ -784,7 +785,30 @@ app.post('/api/auth/logout', async (req, res) => {
   };
   res.clearCookie('sv_access',  cookieOpts);
   res.clearCookie('sv_refresh', cookieOpts);
+}
+
+// POST /api/auth/logout
+app.post('/api/auth/logout', async (req, res) => {
+  await clearCentralSession(req, res);
   res.json({ ok: true });
+});
+
+// GET /api/auth/logout — 다른 서비스가 최상위 이동으로 중앙 세션까지 끊을 때 사용한다.
+// 서드파티 쿠키를 막는 브라우저에서는 교차 사이트 fetch에 sv_refresh가 실리지 않아
+// 서버 기록이 남으므로, 브라우저를 직접 이 주소로 보내는 경로가 필요하다.
+app.get('/api/auth/logout', async (req, res) => {
+  // <img>나 스크립트로 걸리는 강제 로그아웃을 막는다.
+  const dest = req.get('sec-fetch-dest');
+  if (dest && dest !== 'document') return res.status(403).json({ ok: false, error: 'invalid_request' });
+  await clearCentralSession(req, res);
+  const returnTo = String(req.query.redirect_uri || '');
+  try {
+    const url = new URL(returnTo);
+    const isLocal = process.env.NODE_ENV !== 'production'
+      && /^(localhost|127\.0\.0\.1)$/.test(url.hostname);
+    if (ALLOWED_ORIGINS.includes(url.origin) || isLocal) return res.redirect(url.toString());
+  } catch {}
+  return res.redirect('/?prompt=login');
 });
 
 // GET /api/auth/me
