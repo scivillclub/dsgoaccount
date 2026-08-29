@@ -530,10 +530,10 @@
         <form onsubmit="handleRegister(event)" novalidate>
           <div class="reg-progress-head">
             <strong id="reg-step-label">STEP 1</strong>
-            <span id="reg-step-count">7단계 중 1단계</span>
+            <span id="reg-step-count">8단계 중 1단계</span>
           </div>
           <div class="reg-progress" aria-hidden="true">
-            <span class="active"></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span class="active"></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
 
           <section class="reg-step on" data-step="1">
@@ -576,7 +576,7 @@
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button></div>
           </section>
 
-          <section class="reg-step" data-step="2">
+          <section class="reg-step" data-step="3">
             <div class="reg-kicker">Profile</div>
             <h2 class="reg-title">어떤 이름으로 표시할까요?</h2>
             <p class="reg-desc">모든 Scivill 서비스에서 다른 사용자에게 보이는 이름입니다.</p>
@@ -584,7 +584,7 @@
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
-          <section class="reg-step" data-step="3">
+          <section class="reg-step" data-step="4">
             <div class="reg-kicker">Account ID</div>
             <h2 class="reg-title">로그인 아이디를 정해주세요</h2>
             <p class="reg-desc">DS-GO 계정으로 로그인할 때 사용합니다. 가입 후 변경할 수 없습니다.</p>
@@ -592,7 +592,7 @@
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit" onclick="nextRegisterStep()">다음 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
-          <section class="reg-step" data-step="4">
+          <section class="reg-step" data-step="5">
             <div class="reg-kicker">Email · Optional</div>
             <h2 class="reg-title">이메일을 연결할까요?</h2>
             <p class="reg-desc">선택 사항입니다. 입력한다면 실제 메일로 받은 6자리 코드를 인증해야 합니다.</p>
@@ -609,7 +609,7 @@
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="button" class="submit secondary" id="reg-email-skip">건너뛰기</button><button type="button" class="submit" id="reg-email-next" disabled>다음</button></div>
           </section>
 
-          <section class="reg-step" data-step="5">
+          <section class="reg-step" data-step="6">
             <div class="reg-kicker">Password</div>
             <h2 class="reg-title">비밀번호를 만들어주세요</h2>
             <p class="reg-desc">동일한 비밀번호를 한 번 더 입력해 정확히 확인합니다.</p>
@@ -618,15 +618,15 @@
             <div class="reg-actions"><button type="button" class="submit secondary" onclick="previousRegisterStep()">이전</button><button type="submit" class="submit" id="reg-btn">회원가입 완료 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
-          <section class="reg-step" data-step="6">
+          <section class="reg-step" data-step="7">
             <div class="completion-mark">✓</div>
             <div class="reg-kicker">Welcome</div>
             <h2 class="reg-title">회원가입이 완료되었습니다</h2>
             <p class="reg-desc"><b id="reg-complete-name" style="color:var(--fp-fg)"></b>님, DS-GO에 오신 것을 환영합니다. 이제 하나의 계정으로 Scivill 서비스를 이용할 수 있습니다.</p>
-            <div class="reg-actions"><button type="button" class="submit" onclick="setRegisterStep(7)">서비스 알아보기 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
+            <div class="reg-actions"><button type="button" class="submit" onclick="setRegisterStep(8)">서비스 알아보기 <svg viewBox="0 0 20 20"><path d="m7.5 4.5 5 5-5 5"/></svg></button></div>
           </section>
 
-          <section class="reg-step" data-step="7">
+          <section class="reg-step" data-step="8">
             <div class="reg-kicker">Scivill Services</div>
             <h2 class="reg-title">하나의 계정, 이어지는 서비스</h2>
             <p class="reg-desc">DS-GO에서 시작해 필요한 도구를 자유롭게 오가세요. 로그인은 안전하게 이어집니다.</p>
@@ -851,7 +851,7 @@
     document.getElementById('bytenode-reg-btn').addEventListener('click', () => goOAuth('bytenode', 'register'));
     document.getElementById('orya-btn').addEventListener('click', () => goOAuth('orya', 'login'));
     document.getElementById('orya-reg-btn').addEventListener('click', () => goOAuth('orya', 'register'));
-    document.getElementById('reg-method-local').addEventListener('click', () => setRegisterStep(2));
+    document.getElementById('reg-method-local').addEventListener('click', () => setRegisterStep(3));
     // ── 로그인 ───────────────────────────────────────────────────────────────
     const ARROW = '<svg viewBox="0 0 20 20" style="width:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round"><path d="m7.5 4.5 5 5-5 5"/></svg>';
     async function handleLogin(e) {
@@ -876,7 +876,7 @@
       finally { btn.disabled = false; btn.innerHTML = '로그인 ' + ARROW; }
     }
 
-    // ── 7단계 회원가입 ──────────────────────────────────────────────────────
+    // ── 8단계 회원가입 ──────────────────────────────────────────────────────
     let registrationStep = 1;
     let registrationMethodOpen = false;
     let registrationEmailVerified = false;
@@ -885,8 +885,8 @@
     let emailCooldownTimer = null;
 
     function setRegisterStep(step) {
-      if ((step === 6 || step === 7) && !registrationComplete) return;
-      registrationStep = Math.max(1, Math.min(7, step));
+      if ((step === 7 || step === 8) && !registrationComplete) return;
+      registrationStep = Math.max(1, Math.min(8, step));
       document.querySelectorAll('.reg-step').forEach(el => {
         el.classList.toggle('on', Number(el.dataset.step) === registrationStep);
       });
@@ -895,7 +895,7 @@
         el.classList.toggle('active', index + 1 === registrationStep);
       });
       document.getElementById('reg-step-label').textContent = `STEP ${registrationStep}`;
-      document.getElementById('reg-step-count').textContent = `7단계 중 ${registrationStep}단계`;
+      document.getElementById('reg-step-count').textContent = `8단계 중 ${registrationStep}단계`;
       registrationMethodOpen = false;
       document.getElementById('reg-method').classList.remove('on');
       showMsg('reg-msg', '', '');
@@ -904,11 +904,16 @@
     // 약관에 동의한 뒤 가입 방식을 먼저 고르게 한다. 예전에는 간편 가입 버튼이
     // 폼 맨 아래에 있어 스크롤하지 않으면 보이지 않았다.
     function showRegisterMethod() {
+      registrationStep = 2;
       document.querySelectorAll('.reg-step').forEach(el => el.classList.remove('on'));
       document.getElementById('reg-method').classList.add('on');
       registrationMethodOpen = true;
-      document.getElementById('reg-step-label').textContent = 'STEP 1';
-      document.getElementById('reg-step-count').textContent = '가입 방식 선택';
+      document.querySelectorAll('.reg-progress span').forEach((el, index) => {
+        el.classList.toggle('done', index === 0);
+        el.classList.toggle('active', index === 1);
+      });
+      document.getElementById('reg-step-label').textContent = 'STEP 2';
+      document.getElementById('reg-step-count').textContent = '8단계 중 2단계';
       showMsg('reg-msg', '', '');
     }
 
@@ -922,23 +927,23 @@
           registrationError(ERR.agreements_required); return;
         }
       }
-      if (registrationStep === 2) {
+      if (registrationStep === 3) {
         const displayName = document.getElementById('r-dn').value.trim();
         if (!displayName || displayName.length > 40) { registrationError(ERR.invalid_display_name); return; }
       }
-      if (registrationStep === 3) {
+      if (registrationStep === 4) {
         if (!/^[a-zA-Z0-9_]{3,20}$/.test(document.getElementById('r-un').value.trim())) {
           registrationError(ERR.invalid_username); return;
         }
       }
       if (registrationStep === 1) { showRegisterMethod(); return; }
-      if (registrationStep < 5) setRegisterStep(registrationStep + 1);
+      if (registrationStep < 6) setRegisterStep(registrationStep + 1);
     }
 
     function previousRegisterStep() {
       if (registrationComplete) return;
       if (registrationMethodOpen) { setRegisterStep(1); return; }
-      if (registrationStep === 2) { showRegisterMethod(); return; }
+      if (registrationStep === 3) { showRegisterMethod(); return; }
       if (registrationStep > 1) setRegisterStep(registrationStep - 1);
     }
 
@@ -1036,22 +1041,22 @@
       document.getElementById('reg-otp-wrap').classList.remove('on');
       registrationEmailVerified = false;
       registrationVerifiedEmail = '';
-      setRegisterStep(5);
+      setRegisterStep(6);
     });
     document.getElementById('reg-email-next').addEventListener('click', () => {
-      if (registrationEmailVerified && document.getElementById('r-email-consent').checked) setRegisterStep(5);
+      if (registrationEmailVerified && document.getElementById('r-email-consent').checked) setRegisterStep(6);
     });
 
     async function handleRegister(e) {
       e.preventDefault();
-      if (registrationStep !== 5 || registrationComplete) return;
+      if (registrationStep !== 6 || registrationComplete) return;
       const password = document.getElementById('r-pw').value;
       const confirmation = document.getElementById('r-pw-confirm').value;
       if (password.length < 6 || password.length > 128) { registrationError(ERR.invalid_password); return; }
       if (password !== confirmation) { registrationError('비밀번호가 서로 일치하지 않습니다.'); return; }
       const email = document.getElementById('r-em').value.trim().toLowerCase();
       if (email && (!registrationEmailVerified || registrationVerifiedEmail !== email)) {
-        setRegisterStep(4); registrationError(ERR.email_verification_required); return;
+        setRegisterStep(5); registrationError(ERR.email_verification_required); return;
       }
       const btn = document.getElementById('reg-btn');
       btn.disabled = true;
@@ -1074,10 +1079,10 @@
         if (data.ok) {
           registrationComplete = true;
           document.getElementById('reg-complete-name').textContent = data.user.displayName || data.user.username;
-          setRegisterStep(6);
+          setRegisterStep(7);
         } else {
-          if (data.error === 'email_verification_required') setRegisterStep(4);
-          else if (data.error === 'invalid_username' || data.error === 'username_taken' || data.error === 'already_exists') setRegisterStep(3);
+          if (data.error === 'email_verification_required') setRegisterStep(5);
+          else if (data.error === 'invalid_username' || data.error === 'username_taken' || data.error === 'already_exists') setRegisterStep(4);
           registrationError(ERR[data.error] || '알 수 없는 오류.');
         }
       } catch { registrationError('서버에 연결하지 못했습니다. 잠시 후 다시 시도해주세요.'); }
