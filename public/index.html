@@ -58,30 +58,14 @@
       overflow: hidden;
       isolation: isolate;
     }
-    .art-canvas::before {
-      content: '';
-      position: absolute;
-      inset: -18%;
-      z-index: 0;
-      background:
-        radial-gradient(ellipse at 78% 30%, rgba(108,92,231,.22) 0%, transparent 36%),
-        radial-gradient(ellipse at 62% 76%, rgba(40,132,255,.13) 0%, transparent 38%),
-        radial-gradient(ellipse at 94% 68%, rgba(45,212,191,.09) 0%, transparent 30%);
-      filter: blur(24px);
-      animation: aurora-shift 16s ease-in-out infinite alternate;
-    }
     .art-canvas::after {
       content: '';
       position: absolute;
       inset: 0;
       z-index: 2;
-      opacity: .15;
-      background-image:
-        linear-gradient(rgba(255,255,255,.055) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,.055) 1px, transparent 1px);
-      background-size: 56px 56px;
-      -webkit-mask-image: linear-gradient(to left, #000 0%, rgba(0,0,0,.55) 48%, transparent 88%);
-      mask-image: linear-gradient(to left, #000 0%, rgba(0,0,0,.55) 48%, transparent 88%);
+      background:
+        radial-gradient(circle at 74% 43%, transparent 0 24%, rgba(1,2,8,.08) 52%, rgba(1,2,8,.42) 100%),
+        linear-gradient(90deg, rgba(2,3,10,.28), transparent 42%);
       pointer-events: none;
     }
     .art-canvas canvas {
@@ -90,192 +74,8 @@
       display: block;
       width: 100%;
       height: 100%;
+      filter: saturate(1.08) contrast(1.03);
     }
-
-    @keyframes aurora-shift {
-      from { transform: translate3d(-2%, -1%, 0) rotate(-2deg) scale(1); }
-      to   { transform: translate3d(3%, 2%, 0) rotate(2deg) scale(1.08); }
-    }
-
-    .identity-network {
-      position: absolute;
-      inset: 0;
-      z-index: 3;
-      pointer-events: none;
-      --network-x: 0px;
-      --network-y: 0px;
-    }
-    .network-lines {
-      position: absolute;
-      inset: 0;
-      width: 100%;
-      height: 100%;
-      overflow: visible;
-      opacity: .72;
-      filter: drop-shadow(0 0 8px rgba(112,130,255,.18));
-    }
-    .network-lines .link-base {
-      fill: none;
-      stroke: rgba(164,176,255,.17);
-      stroke-width: 1;
-      vector-effect: non-scaling-stroke;
-    }
-    .network-lines .link-flow {
-      fill: none;
-      stroke: url(#network-gradient);
-      stroke-width: 1.25;
-      stroke-linecap: round;
-      stroke-dasharray: 1.5 8;
-      vector-effect: non-scaling-stroke;
-      animation: network-flow 3.8s linear infinite;
-    }
-    .network-lines .link-flow:nth-of-type(2n) { animation-duration: 5.2s; animation-direction: reverse; }
-
-    .network-core {
-      position: absolute;
-      left: calc(72% + var(--network-x));
-      top: calc(42% + var(--network-y));
-      width: 118px;
-      height: 118px;
-      transform: translate(-50%, -50%);
-      display: grid;
-      place-items: center;
-      border-radius: 50%;
-      background:
-        radial-gradient(circle at 36% 28%, rgba(255,255,255,.18), transparent 26%),
-        radial-gradient(circle, rgba(22,27,59,.95) 0 43%, rgba(13,16,36,.72) 44% 60%, transparent 61%);
-      border: 1px solid rgba(186,194,255,.26);
-      box-shadow:
-        0 0 0 12px rgba(113,98,255,.035),
-        0 0 58px rgba(100,91,255,.28),
-        inset 0 0 28px rgba(133,151,255,.16);
-      animation: core-breathe 4.8s ease-in-out infinite;
-    }
-    .network-core::before,
-    .network-core::after {
-      content: '';
-      position: absolute;
-      border-radius: 50%;
-      border: 1px solid transparent;
-    }
-    .network-core::before {
-      inset: -17px;
-      border-top-color: rgba(167,139,250,.55);
-      border-right-color: rgba(96,165,250,.25);
-      animation: core-spin 9s linear infinite;
-    }
-    .network-core::after {
-      inset: -29px;
-      border-bottom-color: rgba(94,234,212,.32);
-      border-left-color: rgba(96,165,250,.16);
-      animation: core-spin 14s linear infinite reverse;
-    }
-    .network-core-mark {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      line-height: 1;
-    }
-    .network-core-mark strong {
-      font-size: 30px;
-      letter-spacing: -.08em;
-      color: #fff;
-      text-shadow: 0 0 20px rgba(191,201,255,.58);
-    }
-    .network-core-mark span {
-      margin-top: 8px;
-      font-size: 8px;
-      font-weight: 700;
-      letter-spacing: .24em;
-      color: rgba(205,211,255,.55);
-    }
-
-    .service-node {
-      position: absolute;
-      min-width: 108px;
-      padding: 10px 12px 10px 39px;
-      border: 1px solid rgba(255,255,255,.13);
-      border-radius: 12px;
-      background: linear-gradient(135deg, rgba(24,28,54,.82), rgba(8,10,23,.7));
-      box-shadow: 0 14px 36px rgba(0,0,0,.26), inset 0 1px rgba(255,255,255,.04);
-      backdrop-filter: blur(12px);
-      animation: node-float 5s ease-in-out infinite;
-    }
-    .service-node::before {
-      content: '';
-      position: absolute;
-      left: 13px;
-      top: 50%;
-      width: 15px;
-      height: 15px;
-      transform: translateY(-50%);
-      border: 1px solid rgba(var(--node-color),.5);
-      border-radius: 5px;
-      background: rgba(var(--node-color),.12);
-      box-shadow: 0 0 15px rgba(var(--node-color),.22);
-    }
-    .service-node::after {
-      content: '';
-      position: absolute;
-      left: 18px;
-      top: 50%;
-      width: 5px;
-      height: 5px;
-      transform: translateY(-50%);
-      border-radius: 50%;
-      background: rgb(var(--node-color));
-      box-shadow: 0 0 9px rgba(var(--node-color),.9);
-    }
-    .service-node b {
-      display: block;
-      font-size: 11px;
-      line-height: 1.2;
-      color: rgba(255,255,255,.88);
-    }
-    .service-node small {
-      display: block;
-      margin-top: 4px;
-      font-size: 7px;
-      letter-spacing: .13em;
-      color: rgba(255,255,255,.34);
-    }
-    .node-deepthink { left: 43%; top: 17%; --node-color: 167,139,250; animation-delay: -.8s; }
-    .node-onsheet   { left: 79%; top: 13%; --node-color: 96,165,250; animation-delay: -2.1s; }
-    .node-oryaform  { left: 83%; top: 57%; --node-color: 94,234,212; animation-delay: -3.4s; }
-    .node-qrlink    { left: 60%; top: 70%; --node-color: 244,114,182; animation-delay: -1.6s; }
-
-    .network-status {
-      position: absolute;
-      right: 28px;
-      bottom: 28px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 8px;
-      font-weight: 700;
-      letter-spacing: .18em;
-      color: rgba(219,224,255,.36);
-    }
-    .network-status i {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: #86efac;
-      box-shadow: 0 0 10px rgba(134,239,172,.9);
-      animation: status-pulse 2s ease-in-out infinite;
-    }
-
-    @keyframes network-flow { to { stroke-dashoffset: -38; } }
-    @keyframes core-spin { to { transform: rotate(360deg); } }
-    @keyframes core-breathe {
-      0%, 100% { box-shadow: 0 0 0 12px rgba(113,98,255,.035), 0 0 48px rgba(100,91,255,.2), inset 0 0 28px rgba(133,151,255,.13); }
-      50% { box-shadow: 0 0 0 17px rgba(113,98,255,.05), 0 0 72px rgba(100,91,255,.34), inset 0 0 38px rgba(133,151,255,.22); }
-    }
-    @keyframes node-float {
-      0%, 100% { transform: translateY(0); }
-      50% { transform: translateY(-7px); }
-    }
-    @keyframes status-pulse { 50% { opacity: .35; transform: scale(.72); } }
 
     .brand-panel::after {
       content: '';
@@ -609,9 +409,6 @@
       }
       .art-label h2 { font-size: 22px; }
       .art-label p { font-size: 13px; max-width: none; }
-      .identity-network { opacity: .62; transform: translateX(9%) scale(.74); transform-origin: right center; }
-      .service-node { display: none; }
-      .network-status { display: none; }
       input[type=text], input[type=email], input[type=password] {
         height: 44px;
         border-radius: 12px;
@@ -643,50 +440,13 @@
       .brand-panel { display: none; }
     }
 
-    @media (prefers-reduced-motion: reduce) {
-      .art-canvas::before { animation: none; }
-      .network-lines .link-flow,
-      .network-core,
-      .network-core::before,
-      .network-core::after,
-      .service-node,
-      .network-status i { animation: none; }
-    }
   </style>
 </head>
 <body>
 
   <!-- ── 왼쪽: 브랜드 패널 ─────────────────────────────────────────── -->
   <div class="brand-panel">
-    <div class="art-canvas" aria-hidden="true">
-      <canvas id="art"></canvas>
-      <div class="identity-network">
-        <svg class="network-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
-          <defs>
-            <linearGradient id="network-gradient" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#a78bfa" />
-              <stop offset=".55" stop-color="#60a5fa" />
-              <stop offset="1" stop-color="#5eead4" />
-            </linearGradient>
-          </defs>
-          <path class="link-base" d="M72 42 C64 31 54 23 48 20" />
-          <path class="link-base" d="M72 42 C76 30 80 22 84 17" />
-          <path class="link-base" d="M72 42 C80 45 85 51 88 59" />
-          <path class="link-base" d="M72 42 C69 54 66 64 64 73" />
-          <path class="link-flow" d="M72 42 C64 31 54 23 48 20" />
-          <path class="link-flow" d="M72 42 C76 30 80 22 84 17" />
-          <path class="link-flow" d="M72 42 C80 45 85 51 88 59" />
-          <path class="link-flow" d="M72 42 C69 54 66 64 64 73" />
-        </svg>
-        <div class="network-core"><div class="network-core-mark"><strong>DS</strong><span>ONE ID</span></div></div>
-        <div class="service-node node-deepthink"><b>DeepThink</b><small>AI WORKSPACE</small></div>
-        <div class="service-node node-onsheet"><b>Onsheet</b><small>DATA SHEET</small></div>
-        <div class="service-node node-oryaform"><b>Oryaform</b><small>SMART FORM</small></div>
-        <div class="service-node node-qrlink"><b>QRLink</b><small>LINK SYSTEM</small></div>
-        <div class="network-status"><i></i>IDENTITY NETWORK · LIVE</div>
-      </div>
-    </div>
-
+    <div class="art-canvas" aria-hidden="true"><canvas id="art"></canvas></div>
     <div class="brand-top brand-logo">
       <!-- ds-go 로고 (화이트) -->
       <svg viewBox="0 0 260 200" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="ds-go">
@@ -913,179 +673,217 @@
   </div>
 
   <script>
-    // ── 미디어 아트 (Scivill 통합 계정 네트워크) ─────────────────────────────
+    // ── 생성형 미디어 아트 (빛의 플로우 필드) ────────────────────────────────
     const canvas = document.getElementById('art');
     const ctx = canvas.getContext('2d');
     const artPanel = canvas.parentElement;
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const FLOW_COLORS = ['99,214,255', '116,143,255', '165,120,255', '72,235,206', '244,143,255'];
     let W = 0;
     let H = 0;
     let pixelRatio = 1;
-    let stars = [];
-    let dust = [];
-    let artFrame = 0;
-    let pointerX = .5;
-    let pointerY = .5;
+    let flowParticles = [];
+    let flowFrame = 0;
+    let flowLastTime = performance.now();
+    let pointerX = 0;
+    let pointerY = 0;
+    let pointerActive = false;
 
     function randomBetween(min, max) {
       return min + Math.random() * (max - min);
     }
 
-    function makeStar() {
-      const depth = randomBetween(.25, 1);
+    function makeFlowParticle(scattered) {
+      const x = scattered ? Math.random() * W : randomBetween(-24, W * .28);
+      const y = Math.random() * H;
+      const speed = randomBetween(.45, 1.55);
       return {
-        x: Math.random() * W,
-        y: Math.random() * H,
-        radius: randomBetween(.35, 1.45) * depth,
-        alpha: randomBetween(.18, .78),
+        x,
+        y,
+        px: x - randomBetween(1, 9),
+        py: y,
+        vx: 0,
+        vy: 0,
+        speed,
+        age: scattered ? Math.random() * 260 : 0,
+        maxAge: randomBetween(180, 440),
+        alpha: randomBetween(.08, .4),
+        width: randomBetween(.32, 1.15),
+        color: FLOW_COLORS[Math.floor(Math.random() * FLOW_COLORS.length)],
         phase: Math.random() * Math.PI * 2,
-        twinkle: randomBetween(.45, 1.7),
-        depth,
       };
     }
 
-    function makeDust() {
-      return {
-        x: Math.random() * W,
-        y: Math.random() * H,
-        radius: randomBetween(10, 34),
-        alpha: randomBetween(.018, .055),
-        drift: randomBetween(2, 7),
-        phase: Math.random() * Math.PI * 2,
-        color: Math.random() > .5 ? '129,140,248' : '56,189,248',
-      };
+    function seedFlowField() {
+      const count = Math.max(280, Math.min(920, Math.round(W * H / 1200)));
+      flowParticles = Array.from({ length: count }, () => makeFlowParticle(true));
     }
 
-    function resize() {
-      const rect = canvas.parentElement.getBoundingClientRect();
+    function paintFlowBackground() {
+      const background = ctx.createLinearGradient(0, 0, W, H);
+      background.addColorStop(0, '#02030a');
+      background.addColorStop(.45, '#050716');
+      background.addColorStop(1, '#02040d');
+      ctx.fillStyle = background;
+      ctx.fillRect(0, 0, W, H);
+
+      const bloom = ctx.createRadialGradient(W * .73, H * .42, 0, W * .73, H * .42, Math.max(W, H) * .54);
+      bloom.addColorStop(0, 'rgba(99,102,241,.13)');
+      bloom.addColorStop(.38, 'rgba(56,189,248,.055)');
+      bloom.addColorStop(1, 'rgba(2,3,10,0)');
+      ctx.fillStyle = bloom;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    function resizeFlowArt() {
+      const rect = artPanel.getBoundingClientRect();
       W = Math.max(0, rect.width);
       H = Math.max(0, rect.height);
       pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(W * pixelRatio);
       canvas.height = Math.round(H * pixelRatio);
       ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
-      stars = Array.from({ length: Math.max(70, Math.min(180, Math.round(W * H / 5200))) }, makeStar);
-      dust = Array.from({ length: 16 }, makeDust);
-      if (reduceMotion.matches) renderArt(performance.now());
+      seedFlowField();
+      paintFlowBackground();
     }
 
-    function drawSpace(time) {
-      const orbitX = W * .77 + (pointerX - .5) * 22;
-      const orbitY = H * .42 + (pointerY - .5) * 16;
-      const orbitScale = Math.max(.64, Math.min(1.08, Math.min(W / 820, H / 700)));
-
-      dust.forEach((particle) => {
-        const x = particle.x + Math.sin(time * .00018 + particle.phase) * particle.drift;
-        const y = particle.y + Math.cos(time * .00013 + particle.phase) * particle.drift;
-        const glow = ctx.createRadialGradient(x, y, 0, x, y, particle.radius);
-        glow.addColorStop(0, `rgba(${particle.color},${particle.alpha})`);
-        glow.addColorStop(1, `rgba(${particle.color},0)`);
-        ctx.fillStyle = glow;
-        ctx.fillRect(x - particle.radius, y - particle.radius, particle.radius * 2, particle.radius * 2);
-      });
-
+    function drawLightRibbons(time) {
+      const colors = ['118,144,255', '169,112,255', '63,222,215'];
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      stars.forEach((star) => {
-        const x = star.x + (pointerX - .5) * star.depth * 18;
-        const y = star.y + (pointerY - .5) * star.depth * 12;
-        const alpha = star.alpha * (.62 + Math.sin(time * .001 * star.twinkle + star.phase) * .24);
-        if (star.radius > 1.05) {
-          const halo = ctx.createRadialGradient(x, y, 0, x, y, star.radius * 5);
-          halo.addColorStop(0, `rgba(215,226,255,${alpha * .3})`);
-          halo.addColorStop(1, 'rgba(150,180,255,0)');
-          ctx.fillStyle = halo;
-          ctx.fillRect(x - star.radius * 5, y - star.radius * 5, star.radius * 10, star.radius * 10);
+      colors.forEach((color, band) => {
+        const baseline = H * (.22 + band * .255);
+        for (let strand = 0; strand < 4; strand += 1) {
+          const offset = (strand - 1.5) * 11;
+          const gradient = ctx.createLinearGradient(0, 0, W, 0);
+          gradient.addColorStop(0, 'rgba(' + color + ',0)');
+          gradient.addColorStop(.32, 'rgba(' + color + ',' + (.045 + strand * .008) + ')');
+          gradient.addColorStop(.72, 'rgba(' + color + ',' + (.11 - strand * .012) + ')');
+          gradient.addColorStop(1, 'rgba(' + color + ',0)');
+          ctx.beginPath();
+          for (let x = -24; x <= W + 24; x += 20) {
+            const y = baseline + offset
+              + Math.sin(x * .007 + time * .00022 + band * 1.7) * (28 + band * 8)
+              + Math.cos(x * .0028 - time * .00013 + strand) * 18
+              + (pointerActive ? (pointerY - H * .5) * .025 : 0);
+            if (x === -24) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.strokeStyle = gradient;
+          ctx.lineWidth = .55 + strand * .28;
+          ctx.shadowColor = 'rgba(' + color + ',.2)';
+          ctx.shadowBlur = 9;
+          ctx.stroke();
         }
-        ctx.beginPath();
-        ctx.arc(x, y, star.radius, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(235,242,255,${Math.max(.06, alpha)})`;
-        ctx.fill();
       });
-
-      const rings = [
-        { radius: 82, squash: .54, speed: .00016, color: '167,139,250', dash: [2, 7] },
-        { radius: 145, squash: .48, speed: -.0001, color: '96,165,250', dash: [1, 10] },
-        { radius: 218, squash: .42, speed: .000065, color: '94,234,212', dash: [3, 13] },
-      ];
-      rings.forEach((ring, index) => {
-        const radius = ring.radius * orbitScale;
-        ctx.save();
-        ctx.translate(orbitX, orbitY);
-        ctx.rotate(-.2 + index * .18);
-        ctx.scale(1, ring.squash);
-        ctx.beginPath();
-        ctx.ellipse(0, 0, radius, radius, 0, 0, Math.PI * 2);
-        ctx.setLineDash(ring.dash);
-        ctx.lineDashOffset = time * ring.speed * 28;
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = `rgba(${ring.color},${.17 - index * .025})`;
-        ctx.stroke();
-        ctx.restore();
-
-        const nodeAngle = time * ring.speed + index * 2.2;
-        const nodeX = orbitX + Math.cos(nodeAngle) * radius;
-        const nodeY = orbitY + Math.sin(nodeAngle) * radius * ring.squash;
-        const nodeGlow = ctx.createRadialGradient(nodeX, nodeY, 0, nodeX, nodeY, 12);
-        nodeGlow.addColorStop(0, `rgba(${ring.color},.7)`);
-        nodeGlow.addColorStop(1, `rgba(${ring.color},0)`);
-        ctx.fillStyle = nodeGlow;
-        ctx.fillRect(nodeX - 12, nodeY - 12, 24, 24);
-        ctx.beginPath();
-        ctx.arc(nodeX, nodeY, 1.7, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${ring.color},.95)`;
-        ctx.fill();
-      });
-
-      const coreGlow = ctx.createRadialGradient(orbitX, orbitY, 0, orbitX, orbitY, 72 * orbitScale);
-      coreGlow.addColorStop(0, 'rgba(154,169,255,.18)');
-      coreGlow.addColorStop(.22, 'rgba(108,92,231,.09)');
-      coreGlow.addColorStop(1, 'rgba(90,120,255,0)');
-      ctx.fillStyle = coreGlow;
-      ctx.beginPath();
-      ctx.arc(orbitX, orbitY, 72 * orbitScale, 0, Math.PI * 2);
-      ctx.fill();
       ctx.restore();
     }
 
-    function renderArt(time) {
+    function flowAngleAt(x, y, time) {
+      const base = Math.sin(x * .0044 + time * .00023) * 1.05
+        + Math.cos(y * .0058 - time * .00017) * .82
+        + Math.sin((x + y) * .0022 + time * .00008) * .52;
+      const focusX = W * .72 + Math.sin(time * .00011) * W * .055;
+      const focusY = H * .43 + Math.cos(time * .00009) * H * .07;
+      const dx = x - focusX;
+      const dy = y - focusY;
+      const distance = Math.hypot(dx, dy);
+      const influence = Math.max(0, 1 - distance / Math.max(180, Math.min(W, H) * .62));
+      const swirl = Math.atan2(dy, dx) + Math.PI * .5;
+      return base * (1 - influence * .72) + swirl * influence * .72;
+    }
+
+    function drawFlowParticles(time, delta) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      flowParticles.forEach((particle, index) => {
+        particle.px = particle.x;
+        particle.py = particle.y;
+
+        const angle = flowAngleAt(particle.x, particle.y, time + particle.phase * 900);
+        let targetX = Math.cos(angle) * particle.speed;
+        let targetY = Math.sin(angle) * particle.speed;
+
+        if (pointerActive) {
+          const dx = particle.x - pointerX;
+          const dy = particle.y - pointerY;
+          const distance = Math.max(18, Math.hypot(dx, dy));
+          const pointerForce = Math.max(0, 1 - distance / 230);
+          targetX += (-dy / distance) * pointerForce * 2.2;
+          targetY += (dx / distance) * pointerForce * 2.2;
+        }
+
+        particle.vx += (targetX - particle.vx) * .075;
+        particle.vy += (targetY - particle.vy) * .075;
+        particle.x += particle.vx * delta;
+        particle.y += particle.vy * delta;
+        particle.age += delta;
+
+        const life = particle.age / particle.maxAge;
+        const fade = Math.sin(Math.min(1, life) * Math.PI);
+        ctx.beginPath();
+        ctx.moveTo(particle.px, particle.py);
+        ctx.lineTo(particle.x, particle.y);
+        ctx.strokeStyle = 'rgba(' + particle.color + ',' + (particle.alpha * fade) + ')';
+        ctx.lineWidth = particle.width;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        if (
+          particle.age >= particle.maxAge ||
+          particle.x < -40 || particle.x > W + 40 ||
+          particle.y < -40 || particle.y > H + 40
+        ) {
+          flowParticles[index] = makeFlowParticle(false);
+        }
+      });
+      ctx.restore();
+    }
+
+    function renderFlowArt(time) {
       if (!W || !H) return;
-      ctx.clearRect(0, 0, W, H);
-      drawSpace(time);
+      const delta = Math.min((time - flowLastTime) / 16.667, 2);
+      flowLastTime = time;
+
+      ctx.fillStyle = 'rgba(2,3,10,.065)';
+      ctx.fillRect(0, 0, W, H);
+      drawLightRibbons(time);
+      drawFlowParticles(time, reduceMotion.matches ? 0 : delta);
+
       if (!reduceMotion.matches && document.visibilityState === 'visible') {
-        artFrame = requestAnimationFrame(renderArt);
+        flowFrame = requestAnimationFrame(renderFlowArt);
       }
     }
 
-    function startArt() {
-      cancelAnimationFrame(artFrame);
-      artFrame = requestAnimationFrame(renderArt);
+    function startFlowArt() {
+      cancelAnimationFrame(flowFrame);
+      flowLastTime = performance.now();
+      flowFrame = requestAnimationFrame(renderFlowArt);
     }
 
     window.addEventListener('resize', () => {
-      resize();
-      startArt();
+      resizeFlowArt();
+      startFlowArt();
     });
     artPanel.addEventListener('pointermove', (event) => {
       const rect = artPanel.getBoundingClientRect();
-      pointerX = (event.clientX - rect.left) / Math.max(1, rect.width);
-      pointerY = (event.clientY - rect.top) / Math.max(1, rect.height);
+      pointerX = event.clientX - rect.left;
+      pointerY = event.clientY - rect.top;
+      pointerActive = true;
     });
     artPanel.addEventListener('pointerleave', () => {
-      pointerX = .5;
-      pointerY = .5;
+      pointerActive = false;
     });
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') startArt();
-      else cancelAnimationFrame(artFrame);
+      if (document.visibilityState === 'visible') startFlowArt();
+      else cancelAnimationFrame(flowFrame);
     });
     reduceMotion.addEventListener?.('change', () => {
-      resize();
-      startArt();
+      resizeFlowArt();
+      startFlowArt();
     });
-    resize();
-    startArt();
-
+    resizeFlowArt();
+    startFlowArt();
     // 테마 없음 — 항상 다크
 
     // ── SSO ──────────────────────────────────────────────────────────────────
