@@ -690,7 +690,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     const id = crypto.randomUUID();
     const pw = await hashPw(password, id);
     const user = {
-      id, username, externalHandle: newExternalHandle(), email: email || '', displayName, nickname: displayName, name: displayName,
+      id, username, externalHandle: '', email: email || '', displayName, nickname: displayName, name: displayName,
       role: VISITOR_ROLE, isBanned: false, createdAt: now, localCredentialsCreatedAt: now,
       termsAcceptedAt: now, privacyAcceptedAt: now, ageConfirmedAt: now,
       termsVersion: '2026-08-27', privacyVersion: '2026-08-27',
@@ -710,6 +710,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
         throw new Error('email_taken');
       }
 
+      user.externalHandle = newExternalHandle(users);
       tx.set(usersRef, { value: [...users, user] });
       tx.set(credsRef, { value: { ...creds, [id]: pw } });
     });
@@ -1960,10 +1961,40 @@ function normalizedProviderEmail(value) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
-/* 밖으로 나가는 공개 아이디. 내부 아이디와 무관한 무작위 값이라
-   제3자가 다른 서비스의 계정과 대조할 수 없다. */
-function newExternalHandle() {
-  return 'dsgo_' + crypto.randomBytes(12).toString('base64url').replace(/[-_]/g, '').slice(0, 16);
+/* 밖으로 나가는 공개 아이디. 로그인 아이디와 완전히 분리된 무작위 값이라
+   제3자가 다른 서비스의 계정과 대조할 수 없다.
+
+   접두사를 'dsgosvl_' 로 두는 이유: 오량인으로 가입한 계정의 로그인 아이디는
+   oy_<sha256(오량인ID)> 형태여서, 오량인 로그인도 함께 붙인 제3자 앱에서는
+   오량인이 직접 보낸 @oy_… 와 DS-GO 가 보낸 @oy_… 의 이름 공간이 겹쳤다.
+   DS-GO 전용 접두사를 쓰면 어느 제공자의 핸들과도 섞이지 않는다.
+
+   길이도 일부러 24자로 맞춘다. 로그인 아이디는 최대 20자라서(가입 검증 규칙),
+   공개 아이디가 없는 예전 계정이 username 을 그대로 내보내더라도
+   새로 발급한 공개 아이디와는 길이만으로 절대 충돌할 수 없다. */
+const EXTERNAL_HANDLE_PREFIX = 'dsgosvl_';
+const EXTERNAL_HANDLE_BODY_LENGTH = 16;
+const EXTERNAL_HANDLE_ALPHABET = 'abcdefghijklmnopqrstuvwxyz';
+
+function randomExternalHandle() {
+  let body = '';
+  for (let index = 0; index < EXTERNAL_HANDLE_BODY_LENGTH; index += 1) {
+    body += EXTERNAL_HANDLE_ALPHABET[crypto.randomInt(EXTERNAL_HANDLE_ALPHABET.length)];
+  }
+  return EXTERNAL_HANDLE_PREFIX + body;
+}
+
+/* 이미 서비스 중인 계정의 공개 아이디는 절대 다시 만들지 않는다. 여기서 나오는 값은
+   새로 만들어지는 계정에만 붙고, 기존 계정은 지금 내보내던 값을 그대로 유지한다. */
+function newExternalHandle(users = []) {
+  const used = new Set(
+    users.map(user => String(user?.externalHandle || '').toLowerCase()).filter(Boolean)
+  );
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const candidate = randomExternalHandle();
+    if (!used.has(candidate)) return candidate;
+  }
+  throw new Error('external_handle_generation_failed');
 }
 
 function externalOAuthUsername(users, prefix, externalId) {
@@ -2029,7 +2060,7 @@ async function resolveBytenodeUser({ mode, linkUserId, profile, termsAccepted, p
     const now = Date.now();
     const id = crypto.randomUUID();
     const username = externalOAuthUsername(users, 'bn', bytenodeId);
-    const externalHandle = newExternalHandle();
+    const externalHandle = newExternalHandle(users);
     const displayName = String(profile?.displayName || profile?.username || username).trim().slice(0, 40) || username;
     resolvedUser = {
       id,
@@ -2154,7 +2185,7 @@ async function resolveOryaUser({ mode, linkUserId, profile, termsAccepted, priva
     const now = Date.now();
     const id = crypto.randomUUID();
     const username = externalOAuthUsername(users, 'oy', oryaId);
-    const externalHandle = newExternalHandle();
+    const externalHandle = newExternalHandle(users);
     const safeDisplayName = displayName || username;
     resolvedUser = {
       id,
