@@ -53,6 +53,11 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'https://scivill-sheet.vercel.app',
   'https://scivill-oryaform.vercel.app',
   'https://scivill-qrlink.vercel.app',
+  // 커스텀 도메인 — vercel.app 주소와 같은 서비스다.
+  // 여기 없으면 그 도메인에서 들어온 SSO 콜백이 invalid_redirect_uri 로 막힌다.
+  'https://scivillclub.kro.kr',
+  'https://dsgo.kro.kr',
+  'https://deepthink.kro.kr',
 ];
 const ALLOWED_ORIGINS = Array.from(new Set([
   ...DEFAULT_ALLOWED_ORIGINS,
