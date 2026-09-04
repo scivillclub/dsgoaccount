@@ -690,7 +690,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
     const id = crypto.randomUUID();
     const pw = await hashPw(password, id);
     const user = {
-      id, username, email: email || '', displayName, nickname: displayName, name: displayName,
+      id, username, externalHandle: newExternalHandle(), email: email || '', displayName, nickname: displayName, name: displayName,
       role: VISITOR_ROLE, isBanned: false, createdAt: now, localCredentialsCreatedAt: now,
       termsAcceptedAt: now, privacyAcceptedAt: now, ageConfirmedAt: now,
       termsVersion: '2026-08-27', privacyVersion: '2026-08-27',
@@ -1960,6 +1960,12 @@ function normalizedProviderEmail(value) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : '';
 }
 
+/* 밖으로 나가는 공개 아이디. 내부 아이디와 무관한 무작위 값이라
+   제3자가 다른 서비스의 계정과 대조할 수 없다. */
+function newExternalHandle() {
+  return 'dsgo_' + crypto.randomBytes(12).toString('base64url').replace(/[-_]/g, '').slice(0, 16);
+}
+
 function externalOAuthUsername(users, prefix, externalId) {
   const base = `${prefix}_${oauthDigest(externalId).slice(0, 16)}`;
   const used = new Set(users.map(user => String(user.username || '').toLowerCase()));
@@ -2023,10 +2029,12 @@ async function resolveBytenodeUser({ mode, linkUserId, profile, termsAccepted, p
     const now = Date.now();
     const id = crypto.randomUUID();
     const username = externalOAuthUsername(users, 'bn', bytenodeId);
+    const externalHandle = newExternalHandle();
     const displayName = String(profile?.displayName || profile?.username || username).trim().slice(0, 40) || username;
     resolvedUser = {
       id,
       username,
+      externalHandle,
       email,
       displayName,
       nickname: displayName,
@@ -2146,10 +2154,12 @@ async function resolveOryaUser({ mode, linkUserId, profile, termsAccepted, priva
     const now = Date.now();
     const id = crypto.randomUUID();
     const username = externalOAuthUsername(users, 'oy', oryaId);
+    const externalHandle = newExternalHandle();
     const safeDisplayName = displayName || username;
     resolvedUser = {
       id,
       username,
+      externalHandle,
       email,
       displayName: safeDisplayName,
       nickname: safeDisplayName,
@@ -2634,7 +2644,8 @@ app.get('/api/oauth/userinfo', oauthTokenLimiter, async (req, res) => {
     const result = { sub: user.id };
     if (scopes.has('profile')) {
       result.name = user.displayName || user.nickname || user.name || user.username || '';
-      result.preferred_username = user.username || '';
+      /* 공개 아이디가 있으면 그것만 내보낸다. 없는(예전) 계정은 종전대로. */
+      result.preferred_username = user.externalHandle || user.username || '';
     }
     if (scopes.has('email')) {
       result.email = user.email || '';
