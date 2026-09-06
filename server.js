@@ -46,7 +46,8 @@ const DEFAULT_ALLOWED_ORIGINS = [
   // origin must be present as well as the consuming service origins.
   'https://dsgoaccount.vercel.app',
   'https://dsgo.vercel.app',
-  'https://scivill.vercel.app',
+  'https://scivill.xyz',
+  'https://www.scivill.xyz',
   'https://scivill-admin.vercel.app',
   'https://scivill-deepthink.vercel.app',
   'https://scivill-nodetask.vercel.app',
@@ -1665,13 +1666,19 @@ app.post('/api/account/orya/unlink', requireAccountAuth, requireAccountOrigin, a
 // ── 신고 및 관리자 1:1 메시지 ───────────────────────────────────────────────
 const REPORTS_COL = 'accountReports';
 const MESSAGES_COL = 'accountMessages';
-const ADMIN_ORIGIN = 'https://scivill.vercel.app';
+// 홈페이지가 scivill.xyz 로 옮겨 가는 동안 vercel.app 주소도 그대로 살아 있다.
+// 한쪽만 받으면 다른 쪽에서 연 관리자 화면이 403 으로 막힌다.
+const ADMIN_ORIGINS = new Set([
+  'https://scivill.xyz',
+  'https://www.scivill.xyz',
+  'https://scivillclub.kro.kr',
+]);
 
 function requireAdminOrigin(req, res, next) {
   const origin = req.get('origin');
   const isLocal = process.env.NODE_ENV !== 'production'
     && origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  if (origin !== ADMIN_ORIGIN && !isLocal) {
+  if (!ADMIN_ORIGINS.has(origin) && !isLocal) {
     return res.status(403).json({ ok: false, error: 'invalid_origin' });
   }
   next();
