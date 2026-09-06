@@ -112,13 +112,28 @@ app.use(helmet({
     }
   }
 }));
+const CORS_BLOCKED = 'cors_blocked';
+
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin) || process.env.NODE_ENV !== 'production') cb(null, true);
-    else cb(new Error('CORS 차단'));
+    else cb(new Error(CORS_BLOCKED));
   },
   credentials: true,
 }));
+
+// cors 가 낯선 출처를 거부하면 Express 기본 오류 처리로 넘어가 500 과 HTML
+// 오류 페이지가 나갔다. 의도한 차단인데 서버 장애로 기록돼 진짜 오류와
+// 구분되지 않고, 오류 페이지가 그대로 노출된다. 같은 형식의 403 으로 돌려준다.
+//
+// 이 핸들러는 위에 등록된 미들웨어의 오류만 받는다. 라우트는 아래에 등록되므로
+// 실제 처리 중 나는 오류는 여기로 오지 않는다.
+app.use((err, req, res, next) => {
+  if (err && err.message === CORS_BLOCKED) {
+    return res.status(403).json({ ok: false, error: 'invalid_origin' });
+  }
+  return next(err);
+});
 app.use(express.json({ limit: '128kb' }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
