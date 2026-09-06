@@ -91,6 +91,14 @@ function normalizeSSORedirect(redirectUri) {
   }
 }
 
+// Vercel 을 거쳐 들어오므로 소켓에 찍히는 주소는 사용자가 아니라 중계 서버다.
+// 이 설정이 없으면 express 가 X-Forwarded-For 를 무시해 모든 사용자가 같은
+// 주소로 보이고, 요청 제한이 사람별이 아니라 전체 한 통으로 세어진다.
+// 그러면 누군가 비밀번호를 몇 번 틀리는 것만으로 전원 로그인이 막힌다.
+// 숫자 1 은 "중계 서버 한 겹까지만 믿는다"는 뜻이다. 전부 믿게 하면
+// 공격자가 헤더를 위조해 제한을 우회한다.
+app.set('trust proxy', 1);
+
 // ── 미들웨어 ─────────────────────────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
@@ -164,8 +172,8 @@ const authLimiter = rateLimit({
 });
 
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60_000, max: 5,
-  message: { ok: false, error: 'too_many_attempts', retryAfter: 900 },
+  windowMs: 5 * 60_000, max: 10,
+  message: { ok: false, error: 'too_many_attempts', retryAfter: 300 },
   standardHeaders: true, legacyHeaders: false,
   skipSuccessfulRequests: true,
 });
@@ -648,14 +656,52 @@ function sendOAuthError(res, status, error, description) {
 // API 라우트
 // ═══════════════════════════════════════════════════════════════════════════════
 
+function isLocalOrigin(origin) {
+  return process.env.NODE_ENV !== 'production'
+    && !!origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
 function requireRegistrationOrigin(req, res, next) {
   const origin = req.get('origin');
-  const isLocal = process.env.NODE_ENV !== 'production'
-    && origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  if (origin !== ACCOUNT_ORIGIN && !isLocal) {
+  if (origin !== ACCOUNT_ORIGIN && !isLocalOrigin(origin)) {
     return res.status(403).json({ ok: false, error: 'invalid_origin' });
   }
   next();
+}
+
+/**
+ * 계정 서버가 직접 띄운 화면에서 시작된 요청만 받는다.
+ *
+ * 로그인·로그아웃이 이 검사 없이 열려 있으면, 공격자가 만든 페이지를 여는
+ * 것만으로 브라우저가 대신 요청을 보내 공격자 계정으로 로그인되거나
+ * 강제로 로그아웃된다. 피해자는 남의 계정을 자기 것으로 알고 쓰게 되고,
+ * 거기에 이메일이나 소셜 계정을 연결하면 그 신원이 공격자 계정에 붙는다.
+ *
+ * Origin 이 아예 없는 요청도 막는다. 브라우저는 이 두 경로에 항상 Origin 을
+ * 붙이므로, 없다는 건 브라우저가 보낸 요청이 아니라는 뜻이다.
+ */
+function requireAccountServerOrigin(req, res, next) {
+  const origin = req.get('origin');
+  if (origin !== ACCOUNT_ORIGIN && !isLocalOrigin(origin)) {
+    return res.status(403).json({ ok: false, error: 'invalid_origin' });
+  }
+  next();
+}
+
+/**
+ * 세션 갱신은 각 서비스 화면(프로필 버튼)에서도 부른다. 계정 서버만
+ * 허용하면 scivill·sheet·qrlink·oryaform·deeplink 의 프로필 표시가 깨진다.
+ * 그래서 SSO 허용 목록에 있는 출처까지 받는다.
+ *
+ * 갱신은 이미 로그인한 본인의 토큰을 새로 발급할 뿐이라 신원이 바뀌지 않는다.
+ * 로그인·로그아웃보다 위험이 낮아 이 범위가 적절하다.
+ */
+function requireKnownOrigin(req, res, next) {
+  const origin = req.get('origin');
+  if (origin === ACCOUNT_ORIGIN || ALLOWED_ORIGINS.includes(origin) || isLocalOrigin(origin)) {
+    return next();
+  }
+  return res.status(403).json({ ok: false, error: 'invalid_origin' });
 }
 
 // POST /api/auth/register
@@ -740,7 +786,7 @@ app.post('/api/auth/register', requireRegistrationOrigin, authLimiter, async (re
 });
 
 // POST /api/auth/login
-app.post('/api/auth/login', loginLimiter, async (req, res) => {
+app.post('/api/auth/login', requireAccountServerOrigin, loginLimiter, async (req, res) => {
   const { username, email, password, remember } = req.body || {};
   const shouldRemember = remember === true;
   const identifier = String(username ?? email ?? '').trim();
@@ -795,7 +841,7 @@ async function clearCentralSession(req, res) {
 }
 
 // POST /api/auth/logout
-app.post('/api/auth/logout', async (req, res) => {
+app.post('/api/auth/logout', requireAccountServerOrigin, async (req, res) => {
   await clearCentralSession(req, res);
   res.json({ ok: true });
 });
@@ -839,7 +885,7 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 });
 
 // POST /api/auth/refresh
-app.post('/api/auth/refresh', async (req, res) => {
+app.post('/api/auth/refresh', requireKnownOrigin, async (req, res) => {
   const cookies = parseCookies(req);
   const refreshId = cookies['sv_refresh'];
   if (!refreshId) return res.status(401).json({ ok: false });
